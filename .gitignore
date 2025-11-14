@@ -1,0 +1,142 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environment
+venv/
+env/
+ENV/
+.env
+.venv
+env.bak/
+venv.bak/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+*.code-workspace
+
+# Windows
+desktop.ini
+Thumbs.db
+
+# Testing
+.coverage
+htmlcov/
+.pytest_cache/
+.tox/
+.hypothesis/
+nosetests.xml
+coverage.xml
+*.cover
+.cache
+
+# Jupyter Notebooks
+.ipynb_checkpoints
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Database files (local development only)
+*.db
+*.sqlite3
+metadata.db
+
+# Local development and testing
+tests/
+debug/
+oldfiles/
+.history/
+prompts/
+
+# Documentation working files (keep final docs in documentation/)
+documentation/chats/
+documentation/*.jpg
+documentation/*.png
+documentation/*.webp
+documentation/*.pdf
+documentation/*_SUMMARY.md
+documentation/*_STATUS*.md
+documentation/*_ENHANCEMENTS*.md
+documentation/*_FIXES*.md
+documentation/*_IMPLEMENTATION*.md
+documentation/*_DEPLOYMENT*.md
+documentation/*_ARCHITECTURE*.md
+documentation/*_PRODUCTION*.md
+documentation/vs-studio-chat*.md
+documentation/imports.txt
+documentation/file_tree.txt
+documentation/one_branding_agency_color_data.txt
+documentation/photoshop_raw_data_from_image.md
+documentation/psd_tools*.md
+documentation/Saving*.pdf
+documentation/extending-metadata-extraction.md
+documentation/metadata-implementation-plan.md
+documentation/metadata-testing-plan.txt
+documentation/node_template.md
+documentation/runtime_hook_implementation_plan.md
+
+# Data working files
+data/__pycache__/
+data/*.py
+data/*converted*.csv
+data/*Copy*.csv
+
+# Temporary and cache files
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+*.tmp
+*.temp
+
+# Distribution / packaging
+*.whl
+
+# ComfyUI specific (if any)
+output/
+input/
+temp/
+
+# Keep these important files
+!README.md
+!LICENSE
+!requirements.txt
+!CHANGELOG.md
+!CONTRIBUTING.md
+!version.txt
+!setup.py
+!documentation/README.md
+!documentation/*_README.md
+!documentation/*NodeDoc.md
+!documentation/*Documentation.md
+!documentation/*_guide.md
+!documentation/*.md

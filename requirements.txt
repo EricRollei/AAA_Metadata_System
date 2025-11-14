@@ -1,0 +1,91 @@
+# Requirements for AAA Metadata System for ComfyUI
+
+# ============================================================
+# Core Dependencies (Required)
+# ============================================================
+
+# Image Processing
+Pillow>=9.0.0
+opencv-python>=4.5.0
+numpy>=1.20.0
+
+# File Format Support
+psd-tools>=1.9.0
+pypng>=0.20220715.0
+
+# Color Analysis
+colorthief>=0.2.1
+
+# Metadata and Hash Support
+imagehash>=4.3.0
+
+# Progress Bars
+tqdm>=4.65.0
+
+# Text Processing and Word Cloud
+wordcloud>=1.9.0
+
+# HTML/Markdown Processing
+beautifulsoup4>=4.11.0
+markdown>=3.4.0
+
+# Web Requests
+requests>=2.28.0
+
+# ============================================================
+# Optional Dependencies (for specific features)
+# ============================================================
+
+# Advanced Metadata Handling (recommended)
+# pyexiv2  # Install separately - platform-specific
+# exiftool  # Install separately - requires Perl
+
+# AI/ML Features (for advanced analysis nodes)
+# Uncomment if you need image quality assessment, facial analysis, etc.
+# torch>=1.10.0
+# torchvision>=0.11.0
+# transformers>=4.25.0
+# pyiqa>=0.1.0
+# deepface>=0.0.75
+# scikit-learn>=1.0.0
+# scikit-image>=0.19.0
+
+# Web Scraping (for Civitai and web scraper nodes)
+# Uncomment if using web scraping features
+# scrapling>=0.2.0
+# playwright>=1.40.0
+# nest-asyncio>=1.5.0
+# atproto>=0.0.1
+# yt-dlp>=2023.3.4
+
+# Computer Vision Models (for advanced detection)
+# Uncomment if using AI detection features
+# clip-by-openai>=1.0
+# open-clip-torch>=2.20.0
+# albumentations>=1.3.0
+# segmentation-models-pytorch>=0.3.0
+# ultralytics>=8.0.0
+
+# Text Detection (for OCR features)
+# pytesseract>=0.3.10
+
+# Vector Graphics (for SVG conversion)
+# vtracer>=0.6.0
+
+# Image Denoising (for noise reduction)
+# oidnpy>=0.1.0
+
+# Additional AI frameworks
+# scipy>=1.7.0
+# matplotlib>=3.5.0
+
+# ============================================================
+# Installation Notes
+# ============================================================
+# 
+# 1. Core dependencies will be installed automatically
+# 2. Uncomment optional dependencies as needed for specific features
+# 3. For PyExiv2 installation, see: https://github.com/LeoHsiao1/pyexiv2
+# 4. For ExifTool installation, see: https://exiftool.org/install.html
+# 5. After installing playwright, run: playwright install
+# 6. Some features may require additional system libraries
