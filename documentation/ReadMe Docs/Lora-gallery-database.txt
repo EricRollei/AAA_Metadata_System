@@ -1,0 +1,30 @@
+📊 Database Management
+Stats Node: Complete overview with health metrics
+Maintenance Node: Cleanup, optimization, and backups
+Bulk Operations: Mass updates and architecture detection
+🎨 Visual Gallery System
+Basic Gallery: Clean visual browsing with selection
+Enhanced Gallery with Edit: Interactive editing capabilities
+Advanced Filtering: Architecture, category, rating, search filters
+Quick Edit Mode: Live editing of ratings, categories, and notes
+🔧 Core Functionality
+LoRA Tester: The main engine with Civitai integration
+Quick Feedback: Fast rating and note-taking during testing
+Batch Operations: Organize hundreds of LoRAs efficiently
+Key Features Users Will Love
+✅ Visual Selection: Click gallery cards to select LoRAs
+✅ Quick Editing: Double-click to edit metadata
+✅ Star Ratings: Fast quality assessment
+✅ Smart Filtering: Find LoRAs by any criteria
+✅ Bulk Management: Handle large collections easily
+✅ Database Health: Keep everything organized
+✅ Civitai Integration: Auto-fetch trigger words
+
+Perfect for Professional Workflows
+This system transforms LoRA testing from a chaotic process into a professional workflow:
+
+Discovery: Use gallery to browse collection visually
+Testing: Use LoRA Tester with Civitai fetching
+Rating: Quick feedback during testing sessions
+Organization: Bulk operations for categorization
+Maintenance: Regular database health checks
