@@ -45,7 +45,7 @@ except ImportError:
 
 # Import metadata service if available
 try:
-    from eric_metadata.service import MetadataService
+    from ..eric_metadata.service import MetadataService
     METADATA_SYSTEM_AVAILABLE = True
 except ImportError:
     print("Note: Eric's metadata system not found. Will use basic metadata handling.")
