@@ -4,6 +4,23 @@ A model-only multi-LoRA loader for use with diffusion models like Wan Video that
 This version removes CLIP input/output and clip_strength parameters
 
 Based on Multi_LoRA_Loader_v02.py
+
+Author: Eric Hiss (GitHub: EricRollei)
+Contact: [eric@historic.camera, eric@rollei.us]
+License: Dual License (Non-Commercial and Commercial Use)
+Copyright (c) 2025 Eric Hiss. All rights reserved.
+
+Dual License:
+1. Non-Commercial Use: This software is licensed under the terms of the
+   Creative Commons Attribution-NonCommercial 4.0 International License.
+   To view a copy of this license, visit http://creativecommons.org/licenses/by-nc/4.0/
+   
+2. Commercial Use: For commercial use, a separate license is required.
+   Please contact Eric Hiss at [eric@historic.camera, eric@rollei.us] for licensing options.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
+INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A 
+PARTICULAR PURPOSE AND NONINFRINGEMENT.
 """
 
 import os
