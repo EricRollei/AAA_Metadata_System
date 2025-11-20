@@ -98,7 +98,7 @@ This node saves images with comprehensive metadata embedding. It extends ComfyUI
 
 The node automatically captures generation parameters from your workflow, including model names, prompts, sampling settings, and other crucial information that helps reproduce your results.
 
-[Detailed documentation](docs/MetadataSaveImage_Node_Documentation.md)
+[Detailed documentation](documentation/ReadMe%20Docs/MetadataSaveImage_Node_Documentation.md)
 
 ### Metadata Query Node
 
@@ -117,7 +117,7 @@ This specialized node allows for extracting specific information from image meta
 
 This node is invaluable for creating conditional workflows based on metadata values or for extracting specific information to display or process in other nodes.
 
-[Detailed documentation](docs/MetadataQueryNodeDoc.md)
+[Detailed documentation](documentation/ReadMe%20Docs/MetadataQueryNodeDoc.md)
 
 ### Text Overlay Node
 
