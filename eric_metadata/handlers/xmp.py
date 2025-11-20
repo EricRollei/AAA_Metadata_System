@@ -67,6 +67,59 @@ class XMPSidecarHandler(BaseHandler):
     def _register_namespaces(self) -> None:
         """Register namespaces with PyExiv2"""
         NamespaceManager.register_with_pyexiv2(self.debug)
+
+    def _unwrap_namespace_wrappers(self, value: Any) -> Any:
+        """Collapse intermediate namespace dictionaries created during parsing."""
+        if isinstance(value, dict):
+            if len(value) == 1:
+                (sole_key, sole_value) = next(iter(value.items()))
+                if sole_key in self.XMP_NS:
+                    return self._unwrap_namespace_wrappers(sole_value)
+            return {key: self._unwrap_namespace_wrappers(sub_value) for key, sub_value in value.items()}
+        if isinstance(value, list):
+            return [self._unwrap_namespace_wrappers(item) for item in value]
+        return value
+
+    @staticmethod
+    def _normalize_lang_alt(value: Any) -> Any:
+        """Reduce language alternative dictionaries to a single representative value."""
+        if isinstance(value, dict):
+            for candidate_key in ("x-default", 'lang="x-default"', 'default'):
+                if candidate_key in value:
+                    return value[candidate_key]
+            if len(value) == 1:
+                return next(iter(value.values()))
+        return value
+
+    @staticmethod
+    def _to_snake_case(name: str) -> str:
+        """Convert CamelCase/TitleCase keys to snake_case for internal dictionaries."""
+        import re
+
+        if not name:
+            return name
+        s1 = re.sub('(.)([A-Z][a-z]+)', r'\1_\2', name)
+        return re.sub('([a-z0-9])([A-Z])', r'\1_\2', s1).lower()
+
+    @staticmethod
+    def _coerce_numeric(value: Any) -> Any:
+        """Try to coerce string numerics into int/float for cleaner metadata."""
+        if isinstance(value, str):
+            try:
+                if value.strip().isdigit():
+                    return int(value.strip())
+                return float(value.strip())
+            except ValueError:
+                return value
+        return value
+
+    def _coerce_structure(self, value: Any) -> Any:
+        """Recursively coerce numeric values within nested structures."""
+        if isinstance(value, dict):
+            return {key: self._coerce_structure(sub_value) for key, sub_value in value.items()}
+        if isinstance(value, list):
+            return [self._coerce_structure(item) for item in value]
+        return self._coerce_numeric(value)
         
     def write_metadata(self, filepath: str, metadata: Dict[str, Any]) -> bool:
         """
@@ -325,9 +378,37 @@ class XMPSidecarHandler(BaseHandler):
         # Add regions
         if 'regions' in metadata:
             self._add_region_metadata(desc, metadata['regions'])
+
+        # Standard namespace sections
+        if 'dc' in metadata:
+            self._add_structured_namespace(desc, 'dc', metadata['dc'])
+        if 'photoshop' in metadata:
+            self._add_structured_namespace(desc, 'photoshop', metadata['photoshop'])
+        if 'xmp' in metadata:
+            self._add_structured_namespace(desc, 'xmp', metadata['xmp'])
+        if 'xmpRights' in metadata:
+            self._add_structured_namespace(desc, 'xmpRights', metadata['xmpRights'])
+        if 'xmpMM' in metadata:
+            self._add_structured_namespace(desc, 'xmpMM', metadata['xmpMM'])
+        if 'Iptc4xmpCore' in metadata:
+            self._add_structured_namespace(desc, 'Iptc4xmpCore', metadata['Iptc4xmpCore'])
+        if 'ai' in metadata:
+            self._add_structured_namespace(desc, 'ai', metadata['ai'])
             
         # Handle other sections generically
-        handled_sections = {'basic', 'analysis', 'ai_info', 'regions'}
+        handled_sections = {
+            'basic',
+            'analysis',
+            'ai_info',
+            'regions',
+            'dc',
+            'photoshop',
+            'xmp',
+            'xmpRights',
+            'xmpMM',
+            'Iptc4xmpCore',
+            'ai',
+        }
         for section_name, section_data in metadata.items():
             if section_name not in handled_sections and section_data:
                 # Determine namespace based on section name
@@ -422,49 +503,71 @@ class XMPSidecarHandler(BaseHandler):
         """
         # Title with language alternative
         if 'title' in basic_data:
-            # Look for existing title element
-            existing_title = desc.find(f".//{{{self.XMP_NS['dc']}}}title")
-            if existing_title is not None:
-                # Update existing title
-                li_elem = existing_title.find(f".//{{{self.XMP_NS['rdf']}}}li[@{{http://www.w3.org/XML/1998/namespace}}lang='x-default']")
-                if li_elem is not None:
-                    li_elem.text = str(basic_data['title'])
+            # Extract text if it's already a language map dict (from previous read/merge)
+            title_value = basic_data['title']
+            if isinstance(title_value, dict):
+                title_text = title_value.get('x-default') or next(iter(title_value.values()), '')
+            else:
+                title_text = str(title_value)
+            
+            if title_text:
+                # Apply truncation
+                title_text, was_truncated = self._truncate_text(title_text)
+                
+                # Look for existing title element
+                existing_title = desc.find(f".//{{{self.XMP_NS['dc']}}}title")
+                if existing_title is not None:
+                    # Update existing title
+                    li_elem = existing_title.find(f".//{{{self.XMP_NS['rdf']}}}li[@{{http://www.w3.org/XML/1998/namespace}}lang='x-default']")
+                    if li_elem is not None:
+                        li_elem.text = title_text
+                    else:
+                        # Language tag not found, create new structure inside existing title
+                        alt = existing_title.find(f".//{{{self.XMP_NS['rdf']}}}Alt")
+                        if alt is None:
+                            alt = ET.SubElement(existing_title, f'{{{self.XMP_NS["rdf"]}}}Alt')
+                        li = ET.SubElement(alt, f'{{{self.XMP_NS["rdf"]}}}li')
+                        li.set(f'{{{self.XMP_NS["xml"]}}}lang', 'x-default')
+                        li.text = title_text
                 else:
-                    # Language tag not found, create new structure inside existing title
-                    alt = existing_title.find(f".//{{{self.XMP_NS['rdf']}}}Alt")
-                    if alt is None:
-                        alt = ET.SubElement(existing_title, f'{{{self.XMP_NS["rdf"]}}}Alt')
+                    # Create new title element
+                    title_elem = ET.SubElement(desc, f'{{{self.XMP_NS["dc"]}}}title')
+                    alt = ET.SubElement(title_elem, f'{{{self.XMP_NS["rdf"]}}}Alt')
                     li = ET.SubElement(alt, f'{{{self.XMP_NS["rdf"]}}}li')
                     li.set(f'{{{self.XMP_NS["xml"]}}}lang', 'x-default')
-                    li.text = str(basic_data['title'])
-            else:
-                # Create new title element
-                title_elem = ET.SubElement(desc, f'{{{self.XMP_NS["dc"]}}}title')
-                alt = ET.SubElement(title_elem, f'{{{self.XMP_NS["rdf"]}}}Alt')
-                li = ET.SubElement(alt, f'{{{self.XMP_NS["rdf"]}}}li')
-                li.set(f'{{{self.XMP_NS["xml"]}}}lang', 'x-default')
-                li.text = str(basic_data['title'])
+                    li.text = title_text
         
         # Description with language alternative - same pattern as title
         if 'description' in basic_data:
-            existing_desc = desc.find(f".//{{{self.XMP_NS['dc']}}}description")
-            if existing_desc is not None:
-                li_elem = existing_desc.find(f".//{{{self.XMP_NS['rdf']}}}li[@{{http://www.w3.org/XML/1998/namespace}}lang='x-default']")
-                if li_elem is not None:
-                    li_elem.text = str(basic_data['description'])
+            # Extract text if it's already a language map dict (from previous read/merge)
+            desc_value = basic_data['description']
+            if isinstance(desc_value, dict):
+                desc_text = desc_value.get('x-default') or next(iter(desc_value.values()), '')
+            else:
+                desc_text = str(desc_value)
+            
+            if desc_text:
+                # Apply truncation
+                desc_text, was_truncated = self._truncate_text(desc_text)
+                
+                existing_desc = desc.find(f".//{{{self.XMP_NS['dc']}}}description")
+                if existing_desc is not None:
+                    li_elem = existing_desc.find(f".//{{{self.XMP_NS['rdf']}}}li[@{{http://www.w3.org/XML/1998/namespace}}lang='x-default']")
+                    if li_elem is not None:
+                        li_elem.text = desc_text
+                    else:
+                        alt = existing_desc.find(f".//{{{self.XMP_NS['rdf']}}}Alt")
+                        if alt is None:
+                            alt = ET.SubElement(existing_desc, f'{{{self.XMP_NS["rdf"]}}}Alt')
+                        li = ET.SubElement(alt, f'{{{self.XMP_NS["rdf"]}}}li')
+                        li.set(f'{{{self.XMP_NS["xml"]}}}lang', 'x-default')
+                        li.text = desc_text
                 else:
-                    alt = existing_desc.find(f".//{{{self.XMP_NS['rdf']}}}Alt")
-                    if alt is None:
-                        alt = ET.SubElement(existing_desc, f'{{{self.XMP_NS["rdf"]}}}Alt')
+                    desc_elem = ET.SubElement(desc, f'{{{self.XMP_NS["dc"]}}}description')
+                    alt = ET.SubElement(desc_elem, f'{{{self.XMP_NS["rdf"]}}}Alt')
                     li = ET.SubElement(alt, f'{{{self.XMP_NS["rdf"]}}}li')
                     li.set(f'{{{self.XMP_NS["xml"]}}}lang', 'x-default')
-                    li.text = str(basic_data['description'])
-            else:
-                desc_elem = ET.SubElement(desc, f'{{{self.XMP_NS["dc"]}}}description')
-                alt = ET.SubElement(desc_elem, f'{{{self.XMP_NS["rdf"]}}}Alt')
-                li = ET.SubElement(alt, f'{{{self.XMP_NS["rdf"]}}}li')
-                li.set(f'{{{self.XMP_NS["xml"]}}}lang', 'x-default')
-                li.text = str(basic_data['description'])
+                    li.text = desc_text
             
         # Keywords as bag
         if 'keywords' in basic_data and basic_data['keywords']:
@@ -555,30 +658,42 @@ class XMPSidecarHandler(BaseHandler):
                     li = ET.SubElement(seq, f'{{{self.XMP_NS["rdf"]}}}li')
                     li.text = str(creator)
         
-        # Rights
-        if 'rights' in basic_data:
-            # Check for existing rights
-            existing_rights = desc.find(f".//{{{self.XMP_NS['dc']}}}rights")
-            if existing_rights is not None:
-                # Look for language tag
-                li_elem = existing_rights.find(f".//{{{self.XMP_NS['rdf']}}}li[@{{http://www.w3.org/XML/1998/namespace}}lang='x-default']")
-                if li_elem is not None:
-                    li_elem.text = str(basic_data['rights'])
+        # Rights / Copyright - handle both 'rights' and 'copyright' fields
+        # Per MWG recommendations, copyright should be in both dc:rights AND xmpRights namespace
+        rights_value = basic_data.get('rights') or basic_data.get('copyright')
+        if rights_value:
+            # Extract text if it's already a language map dict (from previous read/merge)
+            if isinstance(rights_value, dict):
+                rights_text = rights_value.get('x-default') or next(iter(rights_value.values()), '')
+            else:
+                rights_text = str(rights_value)
+            
+            if rights_text:
+                # Apply truncation
+                rights_text, was_truncated = self._truncate_text(rights_text)
+                
+                # Add to dc:rights (Dublin Core - for MWG compliance)
+                existing_rights = desc.find(f".//{{{self.XMP_NS['dc']}}}rights")
+                if existing_rights is not None:
+                    # Look for language tag
+                    li_elem = existing_rights.find(f".//{{{self.XMP_NS['rdf']}}}li[@{{http://www.w3.org/XML/1998/namespace}}lang='x-default']")
+                    if li_elem is not None:
+                        li_elem.text = rights_text
+                    else:
+                        # Language tag not found, create new structure
+                        alt = existing_rights.find(f".//{{{self.XMP_NS['rdf']}}}Alt")
+                        if alt is None:
+                            alt = ET.SubElement(existing_rights, f'{{{self.XMP_NS["rdf"]}}}Alt')
+                        li = ET.SubElement(alt, f'{{{self.XMP_NS["rdf"]}}}li')
+                        li.set(f'{{{self.XMP_NS["xml"]}}}lang', 'x-default')
+                        li.text = rights_text
                 else:
-                    # Language tag not found, create new structure
-                    alt = existing_rights.find(f".//{{{self.XMP_NS['rdf']}}}Alt")
-                    if alt is None:
-                        alt = ET.SubElement(existing_rights, f'{{{self.XMP_NS["rdf"]}}}Alt')
+                    # Create new dc:rights element
+                    rights_elem = ET.SubElement(desc, f'{{{self.XMP_NS["dc"]}}}rights')
+                    alt = ET.SubElement(rights_elem, f'{{{self.XMP_NS["rdf"]}}}Alt')
                     li = ET.SubElement(alt, f'{{{self.XMP_NS["rdf"]}}}li')
                     li.set(f'{{{self.XMP_NS["xml"]}}}lang', 'x-default')
-                    li.text = str(basic_data['rights'])
-            else:
-                # Create new rights element
-                rights_elem = ET.SubElement(desc, f'{{{self.XMP_NS["dc"]}}}rights')
-                alt = ET.SubElement(rights_elem, f'{{{self.XMP_NS["rdf"]}}}Alt')
-                li = ET.SubElement(alt, f'{{{self.XMP_NS["rdf"]}}}li')
-                li.set(f'{{{self.XMP_NS["xml"]}}}lang', 'x-default')
-                li.text = str(basic_data['rights'])
+                    li.text = rights_text
 
     def _add_analysis_metadata(self, desc: ET.Element, analysis_data: Dict[str, Any]) -> None:
         """
@@ -1071,6 +1186,154 @@ class XMPSidecarHandler(BaseHandler):
                     if coord in area:
                         area_elem.set(f'{{{self.XMP_NS["stArea"]}}}{coord}', str(area[coord]))
     
+    def _add_structured_namespace(self, desc: ET.Element, prefix: str, data: Dict[str, Any]) -> None:
+        """Write structured metadata into ``desc`` for a given namespace prefix."""
+
+        if not data:
+            return
+
+        if prefix not in self.XMP_NS:
+            self.log(f"Namespace prefix '{prefix}' not registered; skipping", level="WARNING")
+            return
+
+        for key, value in data.items():
+            if value is None:
+                continue
+            self._assign_field_value(desc, prefix, key, value)
+
+    def _assign_field_value(
+        self,
+        parent: ET.Element,
+        prefix: str,
+        key: str,
+        value: Any,
+        *,
+        allow_remove: bool = True,
+    ) -> None:
+        """Create or replace a namespaced child element with structured content."""
+
+        ns_uri = self.XMP_NS.get(prefix)
+        if not ns_uri:
+            self.log(f"Attempted to write to unknown namespace '{prefix}'", level="WARNING")
+            return
+
+        if allow_remove:
+            existing = parent.find(f"./{{{ns_uri}}}{key}")
+            if existing is not None:
+                parent.remove(existing)
+
+        element = ET.SubElement(parent, f"{{{ns_uri}}}{key}")
+        self._populate_structured_value(element, prefix, key, value)
+
+    def _populate_structured_value(
+        self,
+        element: ET.Element,
+        prefix: str,
+        key: str,
+        value: Any,
+    ) -> None:
+        """Populate ``element`` based on the type of ``value``."""
+
+        if isinstance(value, dict):
+            if self._is_language_map(value):
+                alt = ET.SubElement(element, f"{{{self.XMP_NS['rdf']}}}Alt")
+                for lang, text in sorted(value.items()):
+                    li = ET.SubElement(alt, f"{{{self.XMP_NS['rdf']}}}li")
+                    li.set(f"{{{self.XMP_NS['xml']}}}lang", lang)
+                    li.text = self._format_simple_value(text)
+                return
+
+            desc = ET.SubElement(element, f"{{{self.XMP_NS['rdf']}}}Description")
+            for sub_key, sub_value in value.items():
+                if sub_value is None:
+                    continue
+                self._assign_field_value(desc, prefix, sub_key, sub_value, allow_remove=False)
+            return
+
+        if isinstance(value, (list, tuple, set)):
+            container_type = XMLTools.is_rdf_container(key) or 'Bag'
+            XMLTools.add_list_to_container(
+                element,
+                container_type,
+                list(value),
+                self.XMP_NS,
+            )
+            return
+
+        element.text = self._format_simple_value(value)
+
+    @staticmethod
+    def _is_language_map(mapping: Dict[str, Any]) -> bool:
+        if not mapping:
+            return False
+        for lang_code in mapping:
+            if not isinstance(lang_code, str):
+                return False
+            if lang_code == 'x-default':
+                continue
+            if '-' in lang_code or lang_code.startswith('x-') or len(lang_code) in {2, 5}:
+                continue
+            return False
+        return True
+
+    # XMP text field length limit per Adobe recommendations
+    MAX_TEXT_LENGTH = 2000
+    TRUNCATION_MARKER = " [...TRUNCATED]"
+    
+    @classmethod
+    def _truncate_text(cls, text: str, max_length: int = None) -> tuple[str, bool]:
+        """
+        Truncate text to max length if needed, adding continuation marker.
+        
+        Args:
+            text: Text to truncate
+            max_length: Maximum length (defaults to MAX_TEXT_LENGTH)
+            
+        Returns:
+            Tuple of (truncated_text, was_truncated)
+        """
+        if max_length is None:
+            max_length = cls.MAX_TEXT_LENGTH
+            
+        if len(text) <= max_length:
+            return text, False
+            
+        # Reserve space for truncation marker
+        effective_length = max_length - len(cls.TRUNCATION_MARKER)
+        if effective_length < 100:  # Safety: don't over-truncate
+            effective_length = max_length
+            
+        truncated = text[:effective_length] + cls.TRUNCATION_MARKER
+        return truncated, True
+    
+    @classmethod
+    def _format_simple_value(cls, value: Any, max_length: int = None) -> str:
+        """
+        Format a simple value for XMP, with optional text truncation.
+        
+        Args:
+            value: Value to format
+            max_length: Maximum text length (applies to string values only)
+            
+        Returns:
+            Formatted string value
+        """
+        if isinstance(value, bool):
+            return 'True' if value else 'False'
+        if isinstance(value, (int, float)):
+            return str(value)
+        if value is None:
+            return ''
+        
+        text = str(value)
+        
+        # Apply truncation if max_length specified or text exceeds default limit
+        if max_length or len(text) > cls.MAX_TEXT_LENGTH:
+            truncated, was_truncated = cls._truncate_text(text, max_length)
+            return truncated
+        
+        return text
+
     def _add_generic_data(self, parent: ET.Element, data: Dict[str, Any], namespace: str) -> None:
         """
         Add generic metadata to parent element
@@ -1298,55 +1561,228 @@ class XMPSidecarHandler(BaseHandler):
         
         # Map DC namespace to basic metadata
         if 'dc' in xmp_data:
-            dc_data = xmp_data['dc']
-            
-            # Map common fields
-            if 'title' in dc_data:
-                result['basic']['title'] = dc_data['title']
-            if 'description' in dc_data:
-                result['basic']['description'] = dc_data['description']
-            if 'subject' in dc_data:
-                result['basic']['keywords'] = dc_data['subject']
-            if 'creator' in dc_data:
-                result['basic']['creator'] = dc_data['creator']
-            if 'rights' in dc_data:
-                result['basic']['rights'] = dc_data['rights']
-        
+            dc_data = self._unwrap_namespace_wrappers(xmp_data['dc'])
+
+            # Map common fields with normalization of language alternatives
+            title_value = dc_data.get('title')
+            if title_value:
+                normalized_title = self._normalize_lang_alt(title_value)
+                result['basic']['title'] = normalized_title
+                if isinstance(title_value, dict):
+                    result['basic']['title_localized'] = title_value
+
+            description_value = dc_data.get('description')
+            if description_value:
+                normalized_description = self._normalize_lang_alt(description_value)
+                result['basic']['description'] = normalized_description
+                if isinstance(description_value, dict):
+                    result['basic']['description_localized'] = description_value
+
+            keywords_value = dc_data.get('subject')
+            if keywords_value:
+                if isinstance(keywords_value, list):
+                    result['basic']['keywords'] = keywords_value
+                else:
+                    result['basic']['keywords'] = [keywords_value]
+
+            creator_value = dc_data.get('creator')
+            if creator_value:
+                result['basic']['creator'] = creator_value
+
+            rights_value = dc_data.get('rights')
+            if rights_value:
+                result['basic']['rights'] = rights_value
+
         # Map XMP namespace to basic metadata
         if 'xmp' in xmp_data:
-            xmp_data_fields = xmp_data['xmp']
-            
-            if 'Rating' in xmp_data_fields:
-                result['basic']['rating'] = xmp_data_fields['Rating']
-        
+            xmp_data_fields = self._unwrap_namespace_wrappers(xmp_data['xmp'])
+
+            rating = xmp_data_fields.get('Rating')
+            if rating is not None:
+                result['basic']['rating'] = self._coerce_numeric(rating)
+
         # Map EIQA namespace to analysis metadata
         if 'eiqa' in xmp_data:
-            eiqa_data = xmp_data['eiqa']
-            
+            eiqa_data = self._unwrap_namespace_wrappers(xmp_data['eiqa'])
+
             # Map analysis fields based on known categories
             for key, value in eiqa_data.items():
                 # Common analysis categories
                 if key in ['technical', 'aesthetic', 'classification', 'semantic']:
-                    result['analysis'][key] = value
+                    result['analysis'][key] = self._coerce_structure(value)
                 else:
                     # Default to technical category for unknown fields
                     if 'technical' not in result['analysis']:
                         result['analysis']['technical'] = {}
-                    result['analysis']['technical'][key] = value
+                    result['analysis']['technical'][key] = self._coerce_structure(value)
         
         # Map AI namespace to ai_info metadata
         if 'ai' in xmp_data:
-            result['ai_info'] = xmp_data['ai']
+            ai_raw = self._unwrap_namespace_wrappers(xmp_data['ai'])
+            ai_data = dict(ai_raw)  # shallow copy for mutation safety
+
+            generation: Dict[str, Any] = {}
+            modules: Dict[str, Any] = {}
+
+            base_model = ai_data.pop('BaseModel', None)
+            if base_model:
+                generation['base_model'] = base_model
+
+            sampling = ai_data.pop('Sampling', None)
+            if sampling:
+                generation['sampling'] = {k: self._coerce_numeric(v) for k, v in sampling.items()}
+
+            dimensions = ai_data.pop('Dimensions', None)
+            if dimensions:
+                generation['dimensions'] = {k: self._coerce_numeric(v) for k, v in dimensions.items()}
+
+            flux = ai_data.pop('Flux', None)
+            if flux:
+                generation['flux'] = flux
+
+            for module_key in ['VAE', 'CLIP', 'CLIPVision', 'LoRAs', 'StyleModels']:
+                module_value = ai_data.pop(module_key, None)
+                if module_value:
+                    modules[self._to_snake_case(module_key)] = module_value
+
+            if modules:
+                generation['modules'] = modules
+
+            # Collect simple generation fields
+            simple_field_map = {
+                'prompt': 'prompt',
+                'negative_prompt': 'negative_prompt',
+                'seed': 'seed',
+                'steps': 'steps',
+                'sampler': 'sampler',
+                'scheduler': 'scheduler',
+                'cfg_scale': 'cfg_scale',
+                'denoise': 'denoise',
+                'model': 'model',
+                'model_hash': 'model_hash',
+                'timestamp': 'timestamp'
+            }
+
+            for raw_key, dest_key in list(simple_field_map.items()):
+                if raw_key in ai_data:
+                    generation[dest_key] = self._coerce_numeric(ai_data.pop(raw_key))
+
+            # Ensure timestamp gets promoted even if stored with capitalized key
+            for alt_key in ['Timestamp', 'timestamp']:
+                if alt_key in ai_data:
+                    generation['timestamp'] = ai_data.pop(alt_key)
+                    break
+
+            if generation:
+                result['ai_info']['generation'] = generation
+
+            # Preserve any remaining AI namespace data for diagnostics
+            for remaining_key, remaining_value in ai_data.items():
+                result['ai_info'][self._to_snake_case(remaining_key)] = remaining_value
         
         # Map MWG-RS namespace to regions metadata
         if 'mwg-rs' in xmp_data:
-            mwg_data = xmp_data['mwg-rs']
-            
-            # Map regions data
-            if 'Regions' in mwg_data:
-                result['regions'] = {'faces': [], 'areas': []}
-                # Process region data if needed
+            mwg_data = self._unwrap_namespace_wrappers(xmp_data['mwg-rs'])
+
+            if isinstance(mwg_data, dict) and 'Regions' in mwg_data:
+                raw_regions = mwg_data['Regions']
+                faces: List[Dict[str, Any]] = []
+                areas: List[Dict[str, Any]] = []
+
+                # Region data can be nested under 'mwg-rs' key or directly
+                regions_data = raw_regions.get('mwg-rs', raw_regions) if isinstance(raw_regions, dict) else raw_regions
+                region_list = regions_data.get('RegionList', []) if isinstance(regions_data, dict) else []
                 
+                for entry in region_list:
+                    if not isinstance(entry, dict):
+                        continue
+
+                    # Entry data may be nested under 'mwg-rs' namespace key
+                    entry_data = entry.get('mwg-rs', entry) if 'mwg-rs' in entry else entry
+                    
+                    entry_type = entry_data.get('Type') or entry_data.get('type', '')
+                    normalized: Dict[str, Any] = {}
+                    if entry_type:
+                        normalized['type'] = entry_type
+                    if 'Name' in entry_data or 'name' in entry_data:
+                        normalized['name'] = entry_data.get('Name', entry_data.get('name'))
+                    if 'Area' in entry_data and isinstance(entry_data['Area'], dict):
+                        normalized['area'] = {k: self._coerce_numeric(v) for k, v in entry_data['Area'].items()}
+                    if 'Extensions' in entry_data:
+                        # Extract extensions, handling nested structure and coercing numeric values
+                        ext_raw = entry_data['Extensions']
+                        if isinstance(ext_raw, dict):
+                            # Handle nested eiqa namespace
+                            if 'eiqa' in ext_raw:
+                                eiqa_data = ext_raw['eiqa']
+                                # Further unwrap if face_analysis contains eiqa wrapper
+                                if isinstance(eiqa_data, dict) and 'face_analysis' in eiqa_data:
+                                    face_analysis_data = eiqa_data['face_analysis']
+                                    # Unwrap one more level if needed
+                                    if isinstance(face_analysis_data, dict) and 'eiqa' in face_analysis_data:
+                                        # Coerce numeric values in the innermost data
+                                        coerced_data = self._coerce_structure(face_analysis_data['eiqa'])
+                                        normalized['extensions'] = {'eiqa': {'face_analysis': coerced_data}}
+                                    else:
+                                        # Coerce the whole eiqa data
+                                        coerced_data = self._coerce_structure(eiqa_data)
+                                        normalized['extensions'] = {'eiqa': coerced_data}
+                                else:
+                                    # Coerce the whole eiqa data
+                                    coerced_data = self._coerce_structure(eiqa_data)
+                                    normalized['extensions'] = {'eiqa': coerced_data}
+                            elif 'face_analysis' in ext_raw:
+                                coerced_data = self._coerce_structure(ext_raw)
+                                normalized['extensions'] = {'eiqa': coerced_data}
+                            else:
+                                coerced_data = self._coerce_structure(ext_raw)
+                                normalized['extensions'] = coerced_data
+
+                    if entry_type.lower() == 'face':
+                        faces.append(normalized)
+                    else:
+                        areas.append(normalized)
+
+                summary_items: Dict[str, Any] = {}
+                if isinstance(raw_regions, dict):
+                    # Check for eiqa namespace summary data
+                    if 'eiqa' in raw_regions:
+                        eiqa_summary = raw_regions['eiqa']
+                        if isinstance(eiqa_summary, dict):
+                            for key, value in eiqa_summary.items():
+                                summary_items[key] = self._coerce_numeric(value)
+                    
+                    # Also check direct fields
+                    for key, value in raw_regions.items():
+                        if key in ['RegionList', 'mwg-rs', 'eiqa']:
+                            continue
+                        # Check if this is a summary field
+                        if key in ['face_count', 'detector_type', 'area_count']:
+                            summary_items[key] = self._coerce_numeric(value)
+                        elif isinstance(value, dict) and key not in summary_items:
+                            # Could be nested namespace data - flatten it
+                            for sub_key, sub_value in value.items():
+                                if sub_key not in summary_items:
+                                    summary_items[sub_key] = self._coerce_numeric(sub_value)
+                        elif key not in summary_items:
+                            summary_items[key] = self._coerce_numeric(value)
+
+                if faces and 'face_count' not in summary_items:
+                    summary_items['face_count'] = len(faces)
+                if areas and 'area_count' not in summary_items:
+                    summary_items['area_count'] = len(areas)
+
+                regions_result: Dict[str, Any] = {}
+                if faces:
+                    regions_result['faces'] = faces
+                if areas:
+                    regions_result['areas'] = areas
+                if summary_items:
+                    regions_result['summary'] = summary_items
+
+                if regions_result:
+                    result['regions'] = regions_result
+
         return result
     def _parse_timestamp(self, timestamp_str: Optional[str]) -> Optional[datetime.datetime]:
         """

@@ -2,7 +2,8 @@
 Hash Utility Functions - Perceptual image hashing utilities for duplicate detection
 
 This module provides functions for calculating perceptual image hashes
-and storing them in metadata.
+and storing them in metadata. It also offers helpers for hashing arbitrary
+files with optional sidecar caching to avoid re-reading large model files.
 
 Author: Eric Hiss (GitHub: EricRollei)
 Contact: [eric@historic.camera, eric@rollei.us]
@@ -11,20 +12,29 @@ Copyright (c) 2025 Eric Hiss. All rights reserved.
 
 Dual License:
 1. Non-Commercial Use: This software is licensed under the terms of the
-   Creative Commons Attribution-NonCommercial 4.0 International License.
-   To view a copy of this license, visit http://creativecommons.org/licenses/by-nc/4.0/
+    Creative Commons Attribution-NonCommercial 4.0 International License.
+    To view a copy of this license, visit http://creativecommons.org/licenses/by-nc/4.0/
    
 2. Commercial Use: For commercial use, a separate license is required.
-   Please contact Eric Hiss at [eric@historic.camera, eric@rollei.us] for licensing options.
+    Please contact Eric Hiss at [eric@historic.camera, eric@rollei.us] for licensing options.
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
 INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A 
 PARTICULAR PURPOSE AND NONINFRINGEMENT.
 """
 
+import hashlib
+import logging
 import os
+import string
 from datetime import datetime
+from pathlib import Path
+from typing import Optional, Union
+
 from PIL import Image
+
+
+logger = logging.getLogger(__name__)
 
 # Check for imagehash library
 try:
@@ -170,4 +180,71 @@ def calculate_and_save_hash(image_or_path, file_path, metadata_service, hash_alg
         
     except Exception as e:
         print(f"Error in calculate_and_save_hash: {e}")
+        return None
+
+
+def _is_valid_sha256_digest(value: str) -> bool:
+    """Quick validation for cached SHA256 strings."""
+    if len(value) != 64:
+        return False
+    return all(ch in string.hexdigits for ch in value)
+
+
+def hash_file_sha256(file_path: Union[str, Path], use_cache: bool = True) -> Optional[str]:
+    """Compute a SHA256 hash for ``file_path`` with optional sidecar caching.
+
+    The cache keeps a ``.sha256`` file next to the original resource and is
+    considered valid when its mtime is not older than the source file. Invalid
+    or outdated caches are ignored and overwritten on successful recomputation.
+
+    Args:
+        file_path: Path to the file that should be hashed.
+        use_cache: Whether to consult and persist the optional ``.sha256``
+            sidecar. Set to ``False`` to force a live recompute without writing
+            cache data.
+
+    Returns:
+        The 64-character hexadecimal digest, or ``None`` when the file does not
+        exist or hashing fails for any reason.
+    """
+
+    path = Path(file_path)
+
+    if not path.exists() or not path.is_file():
+        logger.warning("hash_file_sha256: Path does not exist or is not a file: %s", path)
+        return None
+
+    cache_path = path.with_suffix(path.suffix + ".sha256")
+
+    if use_cache and cache_path.exists():
+        try:
+            cache_mtime = cache_path.stat().st_mtime
+            source_mtime = path.stat().st_mtime
+
+            if cache_mtime >= source_mtime:
+                cached_value = cache_path.read_text(encoding="utf-8").strip()
+                if _is_valid_sha256_digest(cached_value):
+                    return cached_value.lower()
+
+                logger.debug("hash_file_sha256: Invalid cache contents in %s", cache_path)
+        except OSError as exc:
+            logger.debug("hash_file_sha256: Failed to read cache %s (%s)", cache_path, exc)
+
+    try:
+        sha256_hash = hashlib.sha256()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(8192), b""):
+                sha256_hash.update(chunk)
+
+        digest = sha256_hash.hexdigest()
+
+        if use_cache:
+            try:
+                cache_path.write_text(digest + "\n", encoding="utf-8")
+            except OSError as exc:
+                logger.debug("hash_file_sha256: Unable to write cache %s (%s)", cache_path, exc)
+
+        return digest
+    except OSError as exc:
+        logger.error("hash_file_sha256: Failed hashing %s (%s)", path, exc)
         return None

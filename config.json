@@ -1,0 +1,28 @@
+{
+  "_comment": "Configuration for AAA Metadata System",
+  "_version": "1.0.0",
+  
+  "runtime_hooks": {
+    "enabled": false,
+    "_comment": "Enable runtime execution hooks to capture actual node execution data. This provides more accurate metadata but adds ~0.2% overhead. Requires ComfyUI restart to take effect. Alternative: Set environment variable AAA_METADATA_ENABLE_HOOKS=true",
+    
+    "log_disagreements": false,
+    "_comment_disagreements": "Log when parser and runtime hooks provide different values for the same field. Useful for debugging conditional logic and switch nodes.",
+    
+    "log_performance": false,
+    "_comment_performance": "Log performance metrics for hook overhead. Shows timing data for each hook execution when debug.enabled is also true.",
+    
+    "inline_size_limit_kb": 32,
+    "_comment_inline_limit": "Maximum size in KB for inline runtime data before moving to sidecar file. Default 32KB. Increase if you want more runtime data embedded directly in images."
+  },
+  
+  "debug": {
+    "enabled": false,
+    "_comment": "Enable detailed debug logging for troubleshooting"
+  },
+  
+  "metadata": {
+    "enable_hash_cache": true,
+    "_comment": "Cache model/LoRA hash calculations for performance (~1000x faster on subsequent runs)"
+  }
+}

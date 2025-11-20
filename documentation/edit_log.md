@@ -1,0 +1,109 @@
+# Edit And Test Log
+
+## Active Items
+
+- [x] 2025-11-19 — **Added backward compatibility for enable_runtime_hooks parameter.** Fixed validation errors when loading old workflows that saved boolean True/False values for enable_runtime_hooks. Added `VALIDATE_INPUTS` classmethod to MetadataAwareSaveImage that automatically converts boolean True → "Enabled", False → "Disabled". Maintains validation for new string values ("Auto (use config)", "Enabled", "Disabled"). Allows seamless migration from old workflows to new dropdown system. All 143 tests passing (7 backward compatibility + 136 existing).
+  - Fix: Added `VALIDATE_INPUTS` classmethod to handle parameter format migration
+  - Conversion: Boolean True → "Enabled", Boolean False → "Disabled"
+  - Validation: Checks string values are in valid list, rejects invalid types
+  - Impact: Existing workflows load without ComfyUI validation errors
+  - Tests: 7/7 tests passing (`tests/test_backward_compatibility.py`)
+  - Location: `nodes/eric_metadata_save_image_v099d.py` lines 310-328
+- [x] 2025-11-19 — **Completed Phase 3: XMP region metadata with MWG-RS compliance.** Fixed XMP namespace parsing to properly read back region metadata after write. Region data now correctly unwraps nested namespace structures (mwg-rs, eiqa, stArea). Added numeric coercion for face analysis extensions (age, dominant_gender, etc.). Created comprehensive test suite with 6 tests covering write/read roundtrip, empty handling, coordinate validation, and MWG namespace structure verification. Regions support faces and areas with coordinates, names, types, and custom extensions for face analysis (age, gender, emotion). All 136 tests passing (6 region + 130 existing).
+  - Fixed: `_map_namespaces_to_sections()` in xmp.py to handle nested namespace keys in parsed XML
+  - Region List: Properly extracts from `raw_regions['mwg-rs']['RegionList']` structure
+  - Extensions: Unwraps nested `eiqa` namespace wrappers and applies numeric coercion
+  - Summary: Extracts face_count, detector_type from eiqa namespace within Regions
+  - Tests: 6/6 passing (`tests/test_xmp_regions.py`): write/read, update behavior, empty handling, coordinates, MWG structure
+  - MWG Compliance: Verified namespace structure with mwg-rs:Regions, mwg-rs:RegionList, mwg-rs:Type/Name/Area, stArea coordinates
+  - XMP Audit: Test images already generated in `tests/xmp_audit_output/` with proper region structure
+- [x] 2025-11-19 — **Implemented per-node UI toggle for runtime hooks (Phase 4.4 complete).** Added `enable_runtime_hooks` dropdown parameter to save node with 3 options: "Auto (use config)" (default), "Enabled", "Disabled". Provides per-workflow control without ComfyUI restart. Priority system: per-node parameter > config.json > hardcoded defaults. When explicitly set to "Enabled" or "Disabled", overrides config; "Auto" and None defer to config. Added `_should_use_runtime_hooks()` method to determine hook usage, updated `_merge_runtime_capture()` to respect per-node setting. All 130 tests passing (9 per-node + 121 existing). Documentation updated in CONFIG_GUIDE.md and RUNTIME_HOOKS_QUICK_REFERENCE.md.
+  - Parameter: Dropdown with "Auto (use config)", "Enabled", "Disabled" in save node INPUT_TYPES
+  - Priority: Per-node explicit setting > config.json > default false
+  - Method: `_should_use_runtime_hooks()` checks parameter, falls back to config
+  - Integration: `_merge_runtime_capture()` early-exits when disabled, respects enabled
+  - Tests: 9/9 tests passing (`tests/test_per_node_runtime_hooks.py`), full suite 130/130
+  - No Breaking Changes: Backward compatible, existing workflows unaffected
+- [x] 2025-11-19 — **Enhanced runtime hooks with performance tracking, disagreement logging, and configurable size limits.** Added 3 new config options: `runtime_hooks.log_disagreements` (debug parser/hook conflicts), `runtime_hooks.log_performance` (measure hook overhead), `runtime_hooks.inline_size_limit_kb` (tune 32KB default). Performance tracking measures hook call count, total time, max time per execution. Disagreement logging identifies when parser and runtime provide different values (useful for conditional workflows). Inline limit now configurable (default 32KB unchanged). Updated save node to use dynamic limit from config. All 121 tests passing (17 enhancement + 104 existing).
+  - Performance: `HookSession` now tracks `hook_call_count`, `hook_total_time`, `hook_max_time` per execution
+  - Logging: `_log_performance_metrics()` in consume_session when both `log_performance` and `debug` enabled
+  - Disagreements: `_log_disagreement()` in save node shows "parser={old} → runtime={new}" when values differ
+  - Configurable: `get_runtime_inline_limit()` reads KB value from config, converts to bytes (default 32768)
+  - Config: Added to `config.json` with documentation comments
+  - Tests: 17/17 tests passing (`tests/test_runtime_hooks_enhancements.py`)
+  - Documentation: `documentation/CONFIG_GUIDE.md` explains all options
+- [x] 2025-11-19 — **Implemented configuration file system for runtime hooks.** Created `config.json` with `runtime_hooks.enabled` setting and `eric_metadata/utils/config.py` loader with priority: (1) env var `AAA_METADATA_ENABLE_HOOKS`, (2) config.json, (3) default false. Updated `runtime_capture.auto_enable_from_env()` to use config system. Config file supports comments, deep merge with defaults, caching, and graceful error handling. All 104 tests passing (11 config + 93 existing). **Future enhancement: Per-node UI toggle for per-workflow control** (best UX, requires ComfyUI restart). **Alternative methods to enable hooks:** (1) Set system environment variable permanently, (2) Add to batch file `set AAA_METADATA_ENABLE_HOOKS=true`, (3) Edit config.json `"runtime_hooks": {"enabled": true}`, (4) Session env var `$env:AAA_METADATA_ENABLE_HOOKS="true"`.
+  - Config: `config.json` in repo root with runtime_hooks.enabled, debug.enabled, metadata.enable_hash_cache
+  - Priority: Environment variable > config.json > defaults (env var always wins for easy testing)
+  - Utilities: `get_runtime_hooks_enabled()`, `get_debug_enabled()`, `get_hash_cache_enabled()`, `reload_config()`
+  - Tests: 11/11 config tests passing (`tests/test_config.py`)
+  - Future: Per-node UI toggle recommended for best per-workflow control (Phase 4.4)
+- [x] 2025-11-19 — **Completed runtime hooks integration (Phase 2).** Added runtime capture integration to both save nodes (simple + v099d). Implemented `_merge_runtime_capture()`, `_integrate_runtime_session()`, `_consume_runtime_session()`, and helper methods for node lookup, runtime node building, and metadata overlay. Runtime data automatically merges with parser data when hooks enabled, adds `ai_info.runtime` section with prompt_id, timestamps, events, resolved inputs, and override tracking. Provenance marks `capture_mode = "parser+hooks"` when runtime data present. Large runtime payloads (>32KB) offloaded to `.runtime.json` sidecar files with inline summaries. All 93 tests passing (6/6 runtime hooks + 87 existing).
+  - Integration: Both MetadataAwareSaveImage (simple) and MetadataAwareSaveImage (v099d) nodes
+  - Schema: Added `ai_info.runtime` with prompt_id, capture_version, timestamps, events, inputs, overrides_applied
+  - Provenance: `capture_mode = "parser+hooks"` when runtime data available, `"parser"` when hooks disabled
+  - Sidecar: Runtime payloads >32KB written to `{filename}.runtime.json`, inline block shows summary
+  - Automatic: Transparent integration - no node changes required, works when hooks enabled via any method
+  - Tests: All 93 tests passing (`A:/Comfy25/ComfyUI_windows_portable/python_embeded/python.exe -m pytest tests/ -v`)
+- [x] 2025-11-19 — Completed comprehensive runtime hooks safety research and validation. Analyzed existing implementation in `eric_metadata/hooks/runtime_capture.py` (333 lines) covering all 6 safety principles: opt-in only (env var), conflict detection, minimal hook work (< 0.2% overhead), per-prompt session isolation, exception handling with auto-disable, and graceful teardown. Documented findings in `documentation/SAFE_RUNTIME_HOOKS_RESEARCH.md` with risk assessment matrix, performance benchmarks, conflict resolution guide, and security analysis. **Conclusion: Current implementation is production-ready and safe.**
+  - Safety: All 6 safety principles implemented and validated
+  - Tests: 6/6 runtime hook tests passing (`tests/prep/test_runtime_hooks.py`)
+  - Performance: < 0.2% overhead on typical workflows
+  - Risk Level: LOW (with documentation)
+  - Enable: Set `AAA_METADATA_ENABLE_HOOKS=true` environment variable
+  - Status: Phase 1 (infrastructure) + Phase 2 (integration) complete
+- [x] 2025-11-19 — Implemented 4-stage JPEG metadata fallback system to prevent save failures when EXIF metadata exceeds 60KB size limit. Created `eric_metadata/utils/jpeg_fallback.py` with utilities for size estimation, metadata reduction, stage determination, and provenance tracking. Integrated into `MetadataService.write_metadata()` with automatic JPEG detection and stage application. Stage 1 (Full): all metadata including workflow. Stage 2 (Reduced): drops workflow JSON. Stage 3 (Minimal): essential fields only (prompts, model, seed, sampler, dimensions, LoRAs). Stage 4 (Sidecar): minimal EXIF + full JSON sidecar file `{filename}_metadata.json`. XMP sidecars continue to receive full metadata (no size limits). All 7 tests passing.
+  - Tests: `A:/Comfy25/ComfyUI_windows_portable/python_embeded/python.exe -m pytest tests/test_jpeg_fallback.py -v`
+  - Provenance: Tracks `jpeg_fallback_stage`, `jpeg_fallback_stage_name`, `jpeg_metadata_size_original`, `jpeg_metadata_size_final` in metadata
+  - Integration: Transparent to save nodes - automatically applies when MetadataService detects JPEG files
+- [x] 2025-11-18 — Implemented text field truncation for long XMP metadata (>2000 chars) with `[...TRUNCATED]` continuation markers. Added `MAX_TEXT_LENGTH=2000`, `_truncate_text()` helper, and applied truncation in `_format_simple_value()` for structured namespace fields and `_add_basic_metadata()` for DC fields (title, description, rights). Created comprehensive test suite (`tests/test_xmp_truncation.py`) covering helper methods, DC fields, copyright, and AI namespace fields - all 6 tests passing.
+  - Verification: `Select-String -Path "tests\xmp_audit_output\test_long_text.xmp" -Pattern "TRUNCATED"` shows 3040-char description truncated to exactly 2000 chars
+  - Tests: `A:/Comfy25/ComfyUI_windows_portable/python_embeded/python.exe -m pytest tests/test_xmp_truncation.py -v`
+  - Added "ai" namespace to structured namespace handlers for proper `<ai:prompt>` field writing
+- [x] 2025-11-18 — Fixed xmpRights copyright field mapping bug in `eric_metadata/handlers/xmp.py` where language maps from merge operations caused nested dict serialization in `dc:rights`. Applied defensive extraction in `_add_basic_metadata()` (lines 467-668) checking `isinstance(value, dict)` and extracting text via `value.get('x-default')` for title, description, and rights fields.
+  - Verification: `Select-String -Path "tests\xmp_audit_output\test_standard_fields.xmp" -Pattern "dc:rights" -Context 2` shows clean copyright text instead of nested dicts
+  - Tests: XMP sidecars now correctly write both `dc:rights` (language-alternative structure) and `xmpRights:Marked/UsageTerms/Owner` fields
+- [x] 2025-11-18 — Created comprehensive XMP audit test suite (`tests/xmp_audit_test_generator.py`) generating 5 test images covering standard DC fields, custom aaa: namespace, long text truncation, multiple creators, and language alternatives. Includes detailed audit checklist for manual Photoshop/Bridge testing.
+  - Output: `tests/xmp_audit_output/` with images, XMP sidecars, JSON references, and AUDIT_CHECKLIST.md
+- [x] 2025-11-16 — Added save-node prompt provenance regression test (`tests/test_save_nodes_prompt_sources.py`) ensuring widget/input source tallies flow through enhanced sidecar metadata and human-readable summaries via the public workflow analyzer.
+  - Tests: `A:/Comfy25/ComfyUI_windows_portable/python_embeded/python.exe -m pytest tests/test_save_nodes_prompt_sources.py -q`
+- [x] 2025-11-15 — Restored MWG region parsing via namespace regex update in `eric_metadata/utils/xml_tools.py` and region reconstruction in `eric_metadata/handlers/xmp.py`; numeric coercion now keeps face counts numeric across round trips.
+  - Tests: `A:/Comfy25/ComfyUI_windows_portable/python_embeded/python.exe -m pytest tests`
+- [x] 2025-11-15 — Hardened `MetadataService.read_metadata` missing-file behaviour so absent sources return `{}` instead of stale DB fallbacks; aligns with `test_service_error_handling` expectations.
+  - Tests: `A:/Comfy25/ComfyUI_windows_portable/python_embeded/python.exe -m pytest tests`
+- [x] 2025-11-15 — Converted PSD/TIFF regression tests to assertion-style checks and scoped torch warning suppression to fixtures, eliminating pytest return-value warnings while keeping noise limited to external Triton notices.
+  - Tests: `A:/Comfy25/ComfyUI_windows_portable/python_embeded/python.exe -m pytest tests`
+- [x] 2025-11-15 — Replaced the legacy workflow parser façade with the shared parsing/generation helpers, refreshed module-boundary tests, and catalogued JPEG embed touchpoints for staged fallbacks.
+  - Tests: `A:/Comfy25/ComfyUI_windows_portable/python_embeded/python.exe -m pytest tests/prep/test_module_boundaries.py`
+- [x] 2025-11-15 — Routed all LoRA hash consumers through `hash_file_sha256`, propagated the cache toggle through save nodes, expanded prompt provenance summaries, and added Automatic1111/JPEG fallback handling.
+  - Tests: `A:/Comfy25/ComfyUI_windows_portable/python_embeded/python.exe -m pytest tests/prep/test_module_boundaries.py -q`
+- [x] 2025-11-15 — Investigated Triton `autotuner.py` deprecation warnings and suppressed them via repository-level `pytest.ini` filter targeting the deprecated warmup parameters while keeping runtime behaviour unchanged.
+  - Tests: `A:/Comfy25/ComfyUI_windows_portable/python_embeded/python.exe -m pytest tests/prep/test_module_boundaries.py`
+- [x] 2025-11-15 — Normalised workflow traversal to handle integer keyed nodes, ensuring BFS sampler discovery and prompt ranking function across mixed graph formats; added regression coverage for sampler fallbacks.
+  - Tests: `A:/Comfy25/ComfyUI_windows_portable/python_embeded/python.exe -m pytest tests/prep/test_module_boundaries.py -q`
+- [x] 2025-11-15 — Documented Phase 2 traversal design, upgraded `WorkflowParsingService` with structured trace output and widget-aware text discovery, and surfaced node-distance diagnostics in metadata processor discovery logs.
+  - Tests: `A:/Comfy25/ComfyUI_windows_portable/python_embeded/python.exe -m pytest tests/prep/test_module_boundaries.py -q`
+- [x] 2025-11-15 — Surfaced prompt source provenance in save-node summaries so widget-derived text is distinguished from direct inputs across sidecar analysis and human-readable reports.
+  - Tests: `A:/Comfy25/ComfyUI_windows_portable/python_embeded/python.exe -m pytest tests/prep/test_module_boundaries.py -q`
+- [ ] Phase 1 follow-ups — Inline LoRA/embedding parsing refinements, A1111 string edge cases, JPEG fallback telemetry, and hash cache UI surfacing remain on deck once discovery work stabilizes.
+- [ ] 2025-11-15 — Promote `test_xmp_sidecar` informational message about missing AI generation info into a real assertion once coverage is implemented.
+  - Tests: _pending_
+- [ ] 2025-11-14 — Extend `eric_metadata.workflow.parsing` to detect inline LoRA and embedding tags; added `_extract_inline_assets` helper and regex coverage.
+  - Tests: `A:/Comfy25/ComfyUI_windows_portable/python_embeded/python.exe -m pytest tests/prep/test_module_boundaries.py`
+- [ ] 2025-11-14 — Wire inline asset discovery into `WorkflowMetadataProcessor`; added provenance fields and regression coverage for inline assets surfacing in analysis outputs.
+  - Tests: `A:/Comfy25/ComfyUI_windows_portable/python_embeded/python.exe -m pytest tests/prep/test_module_boundaries.py`
+- [ ] 2025-11-14 — Deduplicate loader/inline LoRA entries while preserving inline provenance and detection sources; generation metadata now references aggregated assets directly; added regression for loader-preferred strengths and embedding source tracking.
+  - Tests: `A:/Comfy25/ComfyUI_windows_portable/python_embeded/python.exe -m pytest tests/prep/test_module_boundaries.py`
+- [ ] 2025-11-14 — Added BFS-based sampler detection with heuristic scoring for unknown nodes, prompt node discovery helpers, and fallback wiring so generation metadata captures sampler stats when mappings miss.
+  - Tests: `A:/Comfy25/ComfyUI_windows_portable/python_embeded/python.exe -m pytest tests/prep/test_module_boundaries.py`
+- [ ] 2025-11-14 — Ranked prompt extraction by sampler distance with prompt-node metadata output; added dedupe, fallback coverage, and tests for sampler/start-node handling.
+  - Tests: `A:/Comfy25/ComfyUI_windows_portable/python_embeded/python.exe -m pytest tests/prep/test_module_boundaries.py`
+- [ ] 2025-11-14 — Extended save-image human-readable summary to surface ranked prompt provenance and sampler detection diagnostics for easier downstream inspection (simple + v099d nodes).
+  - Tests: `A:/Comfy25/ComfyUI_windows_portable/python_embeded/python.exe -m pytest tests/prep/test_module_boundaries.py`
+- [ ] 2025-11-14 — Wired save-image nodes to load the metadata system version dynamically via shared helper so sidecar `generated_by` strings track future releases (simple + v099d nodes).
+  - Tests: `A:/Comfy25/ComfyUI_windows_portable/python_embeded/python.exe -m pytest tests/prep/test_module_boundaries.py`
+
+## Notes
+
+- Mark an item as complete once downstream consumers have been updated or validated.
+- Add new entries here as further Phase 1 refactor tasks ship.
