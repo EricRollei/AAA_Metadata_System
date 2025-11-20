@@ -1,20 +1,36 @@
-# Metadata System for ComfyUI
+# AAA Metadata System for ComfyUI
 
 ![GitHub License](https://img.shields.io/github/license/EricRollei/AAA_Metadata_System)
 ![Python](https://img.shields.io/badge/python-3.8%2B-blue)
 
-A comprehensive metadata management system for ComfyUI that enables storing, retrieving, and manipulating image metadata across multiple formats.
+Advanced metadata management and multi-format image save/load system for ComfyUI with professional features for Adobe workflows and color management.
+
+## 🎯 Key Highlights
+
+### 🎨 Professional Format Support
+- **Adobe Photoshop PSD** - Load and save with full layer preservation, blend modes, and layer groups
+- **True Vector SVG** - Native SVG export with embedded metadata and scalability
+- **ICC Color Profile Management** - Embed and preserve color profiles (sRGB, Adobe RGB, ProPhoto RGB, etc.)
+- **Adobe-Compatible Metadata** - XMP sidecar files formatted for Photoshop, Lightroom, Bridge, and other cataloging software
+- **MWG-RS Compliant Regions** - Face/area metadata with coordinates compatible with Adobe's region standard
+
+### 📁 Multi-Format Image Support
+- **PNG** - Full metadata embedding with workflow preservation
+- **JPEG** - Smart 4-stage fallback for EXIF size limits
+- **TIFF** - 16-bit support with layers and metadata
+- **WebP** - Modern format with full metadata
+- **PSD** - Complete Photoshop file support with layers, blend modes, and groups
+
+### 📋 Comprehensive Metadata Management
+- **XMP Sidecar Files** - Industry-standard structured metadata for Adobe applications
+- **TXT Summaries** - Human-readable metadata descriptions
+- **JSON Export** - Complete metadata for custom workflows
+- **Embedded EXIF/XMP** - In-image metadata for portability
+- **SQLite Database** - Optional centralized metadata storage
 
 ## Overview
 
-This metadata system provides a unified way to handle image metadata for ComfyUI workflows, supporting:
-
-- Embedded metadata within image files
-- XMP sidecar files
-- Human-readable text files
-- SQLite database storage
-
-The system captures and preserves metadata related to image generation, analysis results, technical characteristics, and more, making your AI-generated images more organized and traceable.
+This metadata system provides professional-grade image and metadata management for ComfyUI workflows, with deep integration for Adobe software ecosystems and color-managed workflows.
 
 ## 🌟 Features
 
