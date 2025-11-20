@@ -30,10 +30,16 @@ This code depends on several third-party libraries, each with its own license:
 import os
 from typing import Dict, Any, List, Optional, Union, Set, Tuple
 import datetime
+import json
 
 from .handlers.base import BaseHandler
 from .handlers.xmp import XMPSidecarHandler
 from .utils.format_detect import FormatHandler
+from .utils.jpeg_fallback import (
+    determine_fallback_stage,
+    add_fallback_provenance,
+    JPEG_EXIF_SIZE_THRESHOLD
+)
 
 class MetadataService:
     """
@@ -43,7 +49,7 @@ class MetadataService:
     a simple interface for reading and writing metadata.
     """
     
-    def __init__(self, debug: bool = False, human_readable_text: bool = True):
+    def __init__(self, debug: bool = False, human_readable_text: bool = False):
         """
         Initialize the metadata service
         
@@ -66,7 +72,13 @@ class MetadataService:
     def write_metadata(self, filepath: str, metadata: Dict[str, Any], 
                     targets: Optional[List[str]] = None) -> Dict[str, bool]:
         """
-        Write metadata to specified targets with proper merging
+        Write metadata to specified targets with proper merging.
+        
+        For JPEG files, implements 4-stage fallback to handle EXIF size limits:
+        Stage 1: Full metadata
+        Stage 2: Reduced (no workflow JSON)
+        Stage 3: Minimal (essential fields only)
+        Stage 4: Sidecar only (minimal EXIF + full JSON sidecar)
         
         Args:
             filepath: Path to image file
@@ -79,9 +91,14 @@ class MetadataService:
         """
         if targets is None:
             targets = ['embedded', 'xmp', 'txt', 'db']
-            
+
+        # Guard against non-existent paths to avoid creating orphaned records
+        if not os.path.exists(filepath):
+            self._log(f"File does not exist: {filepath}", level="ERROR")
+            return {target: False for target in targets}
+
         results = {}
-        
+
         # Get file format info
         format_info = self._get_format_info(filepath)
         
@@ -92,25 +109,72 @@ class MetadataService:
         existing_metadata = self.read_metadata(filepath, fallback=True)
         merged_metadata = self._merge_metadata(existing_metadata, metadata) if existing_metadata else metadata
         
+        # JPEG fallback logic: determine if we need to reduce metadata
+        is_jpeg = filepath.lower().endswith(('.jpg', '.jpeg'))
+        jpeg_fallback_applied = False
+        
+        if is_jpeg and 'embedded' in targets:
+            # Determine which fallback stage is needed
+            stage, metadata_to_embed, final_size = determine_fallback_stage(merged_metadata)
+            
+            if stage > 1:
+                # Fallback was needed
+                jpeg_fallback_applied = True
+                self._log(f"JPEG fallback Stage {stage} applied. Size: {final_size} bytes", level="INFO")
+                
+                # Add provenance tracking
+                original_size = len(json.dumps(merged_metadata, default=str).encode('utf-8'))
+                metadata_to_embed = add_fallback_provenance(
+                    metadata_to_embed, stage, original_size, final_size
+                )
+                
+                # For Stage 4 (sidecar only), write full metadata to JSON sidecar
+                if stage == 4:
+                    # Write full metadata to .json sidecar
+                    json_path = os.path.splitext(filepath)[0] + '_metadata.json'
+                    try:
+                        with open(json_path, 'w', encoding='utf-8') as f:
+                            json.dump(merged_metadata, f, indent=2, ensure_ascii=False, default=str)
+                        self._log(f"Wrote full metadata to sidecar: {json_path}", level="INFO")
+                        
+                        # Add pointer to sidecar in minimal metadata
+                        if 'provenance' not in metadata_to_embed:
+                            metadata_to_embed['provenance'] = {}
+                        metadata_to_embed['provenance']['full_metadata_sidecar'] = os.path.basename(json_path)
+                    except Exception as e:
+                        self._log(f"Failed to write metadata sidecar: {e}", level="ERROR")
+                
+                # Use reduced metadata for embedded target
+                merged_metadata_for_embed = metadata_to_embed
+            else:
+                # Stage 1: Full metadata fits
+                merged_metadata_for_embed = merged_metadata
+        else:
+            merged_metadata_for_embed = merged_metadata
+        
         # Process each target
         for target in targets:
             try:
                 if target == 'embedded':
                     if format_info.get('can_use_pyexiv2', False) or format_info.get('requires_exiftool', False):
                         handler = self._get_embedded_handler()
-                        results['embedded'] = handler.write_metadata(filepath, merged_metadata)
+                        # Use reduced metadata for JPEG if fallback was applied
+                        metadata_to_write = merged_metadata_for_embed if is_jpeg else merged_metadata
+                        results['embedded'] = handler.write_metadata(filepath, metadata_to_write)
                     else:
                         # Skip if format doesn't support embedded metadata
                         results['embedded'] = False
                         
                 elif target == 'xmp':
                     handler = self._get_xmp_handler()
+                    # XMP sidecar always gets full metadata (no size limits)
                     results['xmp'] = handler.write_metadata(filepath, merged_metadata)
                     
                 elif target == 'txt':
                     handler = self._get_txt_handler()
                     # Configure text handler to use human-readable format if enabled
                     handler.set_output_format(human_readable=self.human_readable_text)
+                    # Text file always gets full metadata
                     results['txt'] = handler.write_metadata(filepath, merged_metadata)
                     
                 elif target == 'db':
@@ -151,6 +215,12 @@ class MetadataService:
         Returns:
             dict: Metadata from specified source
         """
+        if not os.path.exists(filepath):
+            if source == 'db':
+                handler = self._get_db_handler()
+                return handler.read_metadata(filepath) if handler else {}
+            return {}
+
         result = {}
         tried_sources = []
         
@@ -173,37 +243,32 @@ class MetadataService:
             tried_sources.append(src)
             
             try:
+                data = {}
                 if src == 'embedded':
                     format_info = self._get_format_info(filepath)
                     if format_info.get('can_use_pyexiv2', False) or format_info.get('requires_exiftool', False):
                         handler = self._get_embedded_handler()
-                        result = handler.read_metadata(filepath)
+                        data = handler.read_metadata(filepath)
                     else:
                         continue  # Skip to next source
                         
                 elif src == 'xmp':
                     handler = self._get_xmp_handler()
-                    xmp_result = handler.read_metadata(filepath)
-                    if xmp_result:
-                        result = xmp_result
-                    else:
+                    data = handler.read_metadata(filepath)
+                    if not data:
                         continue  # Skip to next source
                         
                 elif src == 'txt':
                     handler = self._get_txt_handler()
-                    txt_result = handler.read_metadata(filepath)
-                    if txt_result:
-                        result = txt_result
-                    else:
+                    data = handler.read_metadata(filepath)
+                    if not data:
                         continue  # Skip to next source
                         
                 elif src == 'db':
                     handler = self._get_db_handler()
                     if handler:  # DB handler is optional
-                        db_result = handler.read_metadata(filepath)
-                        if db_result:
-                            result = db_result
-                        else:
+                        data = handler.read_metadata(filepath)
+                        if not data:
                             continue  # Skip to next source
                     else:
                         continue  # Skip to next source
@@ -213,7 +278,8 @@ class MetadataService:
                     continue  # Skip to next source
                     
                 # If we got here with data, break the loop
-                if result:
+                if data and self._has_meaningful_data(data):
+                    result = data
                     break
                     
             except Exception as e:
@@ -227,6 +293,14 @@ class MetadataService:
             self._log(f"Failed to read metadata from any source: {', '.join(tried_sources)}", level="WARNING")
             
         return result
+
+    def _has_meaningful_data(self, payload: Any) -> bool:
+        """Return True when payload contains a non-empty value."""
+        if isinstance(payload, dict):
+            return any(self._has_meaningful_data(value) for value in payload.values())
+        if isinstance(payload, (list, tuple, set)):
+            return any(self._has_meaningful_data(value) for value in payload)
+        return payload not in (None, '', b'', [])
     
     def merge_metadata(self, filepath: str, metadata: Dict[str, Any],
                       targets: Optional[List[str]] = None) -> Dict[str, bool]:

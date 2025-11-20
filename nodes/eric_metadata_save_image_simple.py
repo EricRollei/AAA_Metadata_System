@@ -31,6 +31,7 @@ This code depends on several third-party libraries, each with its own license:
 """
 
 import json
+import copy
 import datetime
 import numpy as np
 import torch
@@ -42,7 +43,7 @@ from psd_tools.constants import Resource, BlendMode
 from psd_tools.psd.image_resources import ImageResource, ImageResources
 import folder_paths
 import xml.etree.ElementTree as ET
-from typing import Dict, Any, List, Optional, Union, Tuple
+from typing import Dict, Any, List, Optional, Union, Tuple, TYPE_CHECKING
 import time
 import re
 import cv2
@@ -66,9 +67,25 @@ except ImportError:
     print("[MetadataSaveImage] vtracer not available - SVG export will be disabled")
 
 from custom_nodes.AAA_Metadata_System import MetadataService
+from custom_nodes.AAA_Metadata_System.eric_metadata.hooks import runtime_capture
+from custom_nodes.AAA_Metadata_System.eric_metadata.utils.a1111 import (
+    generate_a1111_parameters,
+)
+from custom_nodes.AAA_Metadata_System.eric_metadata.utils.node_parameter_mapping import (
+    extract_by_parameter_mapping,
+)
 from custom_nodes.AAA_Metadata_System.eric_metadata.utils.workflow_parser import WorkflowParser
 from custom_nodes.AAA_Metadata_System.eric_metadata.utils.workflow_extractor import WorkflowExtractor
 from custom_nodes.AAA_Metadata_System.eric_metadata.utils.workflow_metadata_processor import WorkflowMetadataProcessor
+from custom_nodes.AAA_Metadata_System.eric_metadata.utils.version import (
+    get_metadata_system_version_label,
+)
+
+
+if TYPE_CHECKING:
+    from custom_nodes.AAA_Metadata_System.eric_metadata.hooks.runtime_capture import (
+        HookSession,
+    )
 
 
 # Initialize color profiles - will be populated on first use
@@ -98,8 +115,12 @@ COLOR_INTENTS = {
     'Absolute Colorimetric': 3,  # Preserves exact colors, no white point adjustment
 }
 
+METADATA_SYSTEM_GENERATED_BY = get_metadata_system_version_label()
+
 class MetadataAwareSaveImage:
     """SaveImage node that embeds metadata during save, with support for multiple formats including layers"""
+
+    RUNTIME_INLINE_LIMIT = 32768
     
     @classmethod
     def INPUT_TYPES(cls):
@@ -264,12 +285,16 @@ class MetadataAwareSaveImage:
                 # Advanced options
                 "save_individual_discovery": ("BOOLEAN", 
                     {"default": False, "tooltip": "Save individual discovery JSON and HTML files for each run (central discovery is always maintained)"}), 
+                "enable_hash_cache": ("BOOLEAN", 
+                    {"default": True, "tooltip": "Use .sha256 sidecar caches when computing model hashes"}), 
                 "debug_logging": ("BOOLEAN", 
                     {"default": False, "tooltip": "Enable detailed debug logging to console"}), 
                 
                 # Include workflow embedding option
                 "embed_workflow": ("BOOLEAN", 
                     {"default": True, "tooltip": "Embed ComfyUI workflow graph data in the PNG file - enables re-loading workflow later (PNG only)"}), 
+                "a1111_compat_mode": ("BOOLEAN", 
+                    {"default": False, "tooltip": "Embed Automatic1111-compatible parameters string in PNG text chunk and JPEG comment for wider tool support"}), 
             },
             # Standard ComfyUI way to access workflow data
             "hidden": {
@@ -311,6 +336,9 @@ class MetadataAwareSaveImage:
         # UUID for this instance
         import uuid
         self.instance_id = str(uuid.uuid4())
+
+        self._runtime_sidecar_payload = None
+        self._runtime_sidecar_ref = None
     
     def _save_as_tiff(self, image, image_path, metadata=None, prompt=None, extra_pnginfo=None, **kwargs):
         """Save image as TIFF with proper layers, color and 16-bit support"""
@@ -825,17 +853,95 @@ class MetadataAwareSaveImage:
                 gen_data = enhanced['ai_info']['generation']
                 
                 # Add comprehensive prompt information with formatting
-                if any(key in gen_data for key in ['prompt', 'positive_prompt']):
+                if any(key in gen_data for key in ['prompt', 'positive_prompt', 'prompt_nodes']):
                     prompt = gen_data.get('prompt') or gen_data.get('positive_prompt', '')
-                    
-                    # Add formatted prompt sections for better readability in sidecars
-                    enhanced['ai_info']['generation']['prompt_analysis'] = {
+                    prompt_nodes = gen_data.get('prompt_nodes') or []
+
+                    positive_nodes = [node for node in prompt_nodes if not node.get('is_negative')]
+                    negative_nodes = [node for node in prompt_nodes if node.get('is_negative')]
+
+                    primary_positive = positive_nodes[0] if positive_nodes else None
+                    primary_negative = negative_nodes[0] if negative_nodes else None
+
+                    source_counts: Dict[str, int] = {}
+
+                    def _collect_source_types(node: Dict[str, Any]) -> List[str]:
+                        sources_map = node.get('sources') if isinstance(node, dict) else None
+                        if not isinstance(sources_map, dict):
+                            return []
+                        collected: List[str] = []
+                        for origin in sources_map.values():
+                            if not isinstance(origin, str):
+                                continue
+                            collected.append(origin)
+                            source_counts[origin] = source_counts.get(origin, 0) + 1
+                        return sorted(set(collected))
+
+                    analysis: Dict[str, Any] = {
                         'length': len(prompt),
                         'word_count': len(prompt.split()) if prompt else 0,
                         'has_style_tags': any(style in prompt.lower() for style in ['style', 'by ', 'in the style of']),
                         'has_quality_tags': any(qual in prompt.lower() for qual in ['high quality', 'detailed', 'masterpiece']),
-                        'truncated_for_embedded': len(prompt) > 500
+                        'truncated_for_embedded': len(prompt) > 500,
                     }
+
+                    if prompt_nodes:
+                        detailed_nodes: List[Dict[str, Any]] = []
+                        variant_nodes: List[Dict[str, Any]] = []
+
+                        for node in prompt_nodes:
+                            source_types = _collect_source_types(node)
+                            detailed_nodes.append(
+                                {
+                                    'node_id': node.get('node_id'),
+                                    'class_type': node.get('class_type'),
+                                    'distance': node.get('distance'),
+                                    'is_negative': node.get('is_negative', False),
+                                    'source_types': source_types,
+                                }
+                            )
+                            variant_nodes.append(
+                                {
+                                    'text': node.get('text', ''),
+                                    'node_id': node.get('node_id'),
+                                    'is_negative': node.get('is_negative', False),
+                                    'distance': node.get('distance'),
+                                    'source_types': source_types,
+                                }
+                            )
+
+                        analysis['prompt_node_count'] = len(prompt_nodes)
+                        analysis['prompt_nodes'] = detailed_nodes
+                        analysis['prompt_variants'] = variant_nodes
+
+                        if source_counts:
+                            analysis['prompt_source_breakdown'] = dict(sorted(source_counts.items()))
+                            analysis['has_widget_prompts'] = source_counts.get('widget', 0) > 0
+                            analysis['has_input_prompts'] = source_counts.get('input', 0) > 0
+                        else:
+                            analysis['has_widget_prompts'] = False
+                            analysis['has_input_prompts'] = True
+
+                    if primary_positive:
+                        primary_sources = _collect_source_types(primary_positive)
+                        analysis['primary_prompt_node'] = {
+                            'text': primary_positive.get('text', ''),
+                            'node_id': primary_positive.get('node_id'),
+                            'class_type': primary_positive.get('class_type'),
+                            'distance': primary_positive.get('distance'),
+                            'source_types': primary_sources,
+                        }
+                    if primary_negative:
+                        negative_sources = _collect_source_types(primary_negative)
+                        analysis['primary_negative_prompt_node'] = {
+                            'text': primary_negative.get('text', ''),
+                            'node_id': primary_negative.get('node_id'),
+                            'class_type': primary_negative.get('class_type'),
+                            'distance': primary_negative.get('distance'),
+                            'source_types': negative_sources,
+                        }
+
+                    enhanced['ai_info']['generation']['prompt_analysis'] = analysis
                 
                 # Add comprehensive LoRA information
                 if 'loras' in gen_data and isinstance(gen_data['loras'], list):
@@ -854,7 +960,7 @@ class MetadataAwareSaveImage:
             
             # Add sidecar-specific metadata sections
             enhanced['sidecar_info'] = {
-                'generated_by': 'ComfyUI Metadata System v099d',
+                'generated_by': METADATA_SYSTEM_GENERATED_BY,
                 'generation_timestamp': datetime.datetime.now().isoformat(),
                 'targets': targets,
                 'enhanced_features': {
@@ -910,6 +1016,61 @@ class MetadataAwareSaveImage:
                     'steps': gen.get('steps', gen.get('sampling', {}).get('steps', 'Unknown')),
                     'guidance': gen.get('guidance', gen.get('flux', {}).get('guidance', 'Unknown'))
                 }
+
+                prompt_nodes = gen.get('prompt_nodes') or []
+                if prompt_nodes:
+                    def _source_map(node: Dict[str, Any]) -> Dict[str, str]:
+                        sources = node.get('sources')
+                        return sources if isinstance(sources, dict) else {}
+
+                    source_counts: Dict[str, int] = {}
+                    for node in prompt_nodes:
+                        for origin in _source_map(node).values():
+                            if isinstance(origin, str):
+                                source_counts[origin] = source_counts.get(origin, 0) + 1
+
+                    def _format_label(node: Dict[str, Any]) -> str:
+                        origins = sorted(
+                            {
+                                origin
+                                for origin in _source_map(node).values()
+                                if isinstance(origin, str)
+                            }
+                        )
+                        return '/'.join(origins) if origins else 'inputs'
+
+                    summary['generation_summary']['primary_prompt'] = prompt_nodes[0].get('text', '')
+                    summary['generation_summary']['prompt_sources'] = [
+                        (
+                            f"{node.get('text', '')} (node {node.get('node_id')}, "
+                            f"d={node.get('distance', 'n/a')}, {'negative' if node.get('is_negative') else 'positive'}, "
+                            f"via {_format_label(node)})"
+                        )
+                        for node in prompt_nodes
+                    ]
+
+                    if source_counts:
+                        summary['generation_summary']['prompt_source_breakdown'] = dict(sorted(source_counts.items()))
+
+                    negative_nodes = [node for node in prompt_nodes if node.get('is_negative')]
+                    if negative_nodes:
+                        summary['generation_summary']['primary_negative_prompt'] = negative_nodes[0].get('text', '')
+                        summary['generation_summary']['negative_prompt_sources'] = [
+                            (
+                                f"{node.get('text', '')} (node {node.get('node_id')}, "
+                                f"d={node.get('distance', 'n/a')}, via {_format_label(node)})"
+                            )
+                            for node in negative_nodes
+                        ]
+
+                detection = gen.get('sampler_detection')
+                if isinstance(detection, dict):
+                    summary['generation_summary']['sampler_detection'] = {
+                        'method': detection.get('method', 'unknown'),
+                        'reason': detection.get('reason'),
+                        'distance': detection.get('distance'),
+                        'priority': detection.get('priority'),
+                    }
                 
                 # LoRA summary
                 if gen.get('loras'):
@@ -979,14 +1140,20 @@ class MetadataAwareSaveImage:
         color_profile_name = kwargs.get('color_profile_name', 'sRGB v4 Appearance')
         png_compression = kwargs.get('png_compression', 6)
         embed_workflow = kwargs.get('embed_workflow', True)
+        a1111_parameters = kwargs.get('a1111_parameters')
         
         # Get color profile data if name is specified
         color_profile_data = self._get_color_profile(color_profile_name) if color_profile_name != 'None' else None
         
         # Prepare workflow data if needed
         workflow_pnginfo = None
-        if embed_workflow and prompt:
-            workflow_pnginfo = self._prepare_workflow_pnginfo(prompt, extra_pnginfo)
+        if embed_workflow or a1111_parameters:
+            workflow_pnginfo = self._prepare_workflow_pnginfo(
+                prompt,
+                extra_pnginfo,
+                embed_workflow=embed_workflow,
+                a1111_parameters=a1111_parameters
+            )
         
         
         # Normalize input to numpy array with channels last
@@ -1071,7 +1238,8 @@ class MetadataAwareSaveImage:
                     extra_pnginfo=extra_pnginfo,
                     color_profile_data=color_profile_data,
                     workflow_pnginfo=workflow_pnginfo,
-                    png_compression=png_compression
+                    png_compression=png_compression,
+                    a1111_parameters=a1111_parameters
                 )
                 if success:
                     print(f"[MetadataSaveImage] Saved 16-bit PNG using pypng: {image_path}")
@@ -1090,7 +1258,8 @@ class MetadataAwareSaveImage:
                     extra_pnginfo=extra_pnginfo,
                     color_profile_data=color_profile_data,
                     workflow_pnginfo=workflow_pnginfo,
-                    png_compression=png_compression
+                    png_compression=png_compression,
+                    a1111_parameters=a1111_parameters
                 )
                 if success:
                     print(f"[MetadataSaveImage] Saved 16-bit PNG using OpenCV: {image_path}")
@@ -1267,9 +1436,16 @@ class MetadataAwareSaveImage:
         Returns:
             bool: Success status
         """
+        a1111_parameters = kwargs.get('a1111_parameters')
+
         # Only create a new workflow_pnginfo if none was provided
-        if workflow_pnginfo is None and kwargs.get('embed_workflow', True) and prompt:
-            workflow_pnginfo = self._prepare_workflow_pnginfo(prompt, extra_pnginfo)
+        if workflow_pnginfo is None and (kwargs.get('embed_workflow', True) or a1111_parameters):
+            workflow_pnginfo = self._prepare_workflow_pnginfo(
+                prompt,
+                extra_pnginfo,
+                embed_workflow=kwargs.get('embed_workflow', True),
+                a1111_parameters=a1111_parameters
+            )
         
         # Extract tEXt chunks from workflow_pnginfo
         text_chunks = []
@@ -2160,12 +2336,10 @@ class MetadataAwareSaveImage:
         results = []
         errors = []
         ui_results = []
+        telemetry_events = []
         
-        # Prepare workflow png info
-        workflow_pnginfo = None
-        embed_workflow = kwargs.get('embed_workflow', True)
-        if prompt:
-            workflow_pnginfo = self._prepare_workflow_pnginfo(prompt, extra_pnginfo, embed_workflow)
+        self._runtime_sidecar_payload = None
+        self._runtime_sidecar_ref = None
 
         try:
             # Create a copy for processing if it's a tensor
@@ -2210,13 +2384,13 @@ class MetadataAwareSaveImage:
             
             # Prepare metadata if enabled
             metadata = {}
+            workflow_metadata = {}
             if kwargs.get("enable_metadata", True):
                 try:
                     # Build metadata from inputs first
                     input_metadata = self.build_metadata_from_inputs(**kwargs)
                     
                     # Extract workflow metadata ONLY ONCE
-                    workflow_metadata = {}
                     if prompt or extra_pnginfo:
                         if self.debug:
                             print("[MetadataSaveImage] Extracting metadata from workflow")
@@ -2224,14 +2398,14 @@ class MetadataAwareSaveImage:
                         # Use the workflow processor to extract metadata
                         # IMPORTANT: Always set workflow_in_xmp to false to prevent bloated XMP
                         workflow_metadata = self.extract_metadata_from_workflow(
-                            prompt, 
-                            extra_pnginfo, 
+                            prompt,
+                            extra_pnginfo,
                             embed_workflow_in_xmp=False,  # Never embed the full workflow in XMP
                             **kwargs
                         )
                         
                         if self.debug and workflow_metadata:
-                            print(f"[MetadataSaveImage] Successfully extracted workflow metadata")
+                            print("[MetadataSaveImage] Successfully extracted workflow metadata")
                     
                     # Merge with priority for user inputs
                     metadata = self.metadata_service._merge_metadata(workflow_metadata, input_metadata)
@@ -2253,9 +2427,35 @@ class MetadataAwareSaveImage:
                     errors.append(f"Metadata preparation error: {str(metadata_error)}")
                     print(f"[MetadataSaveImage] Error preparing metadata: {str(metadata_error)}")
                     metadata = {}
-            
+            elif kwargs.get("a1111_compat_mode", False) and (prompt or extra_pnginfo):
+                try:
+                    workflow_metadata = self.extract_metadata_from_workflow(
+                        prompt,
+                        extra_pnginfo,
+                        embed_workflow_in_xmp=False,
+                        **kwargs
+                    )
+                except Exception as metadata_error:
+                    if self.debug:
+                        print(f"[MetadataSaveImage] Error preparing compatibility metadata: {str(metadata_error)}")
+                    workflow_metadata = {}
+
+            # Generate Automatic1111 compatibility string if requested
+            metadata_for_a1111 = metadata if metadata else workflow_metadata
+            a1111_parameters = ""
+            if kwargs.get("a1111_compat_mode", False):
+                try:
+                    a1111_parameters = self._generate_a1111_string(metadata_for_a1111)
+                except Exception as compat_error:
+                    if self.debug:
+                        print(f"[MetadataSaveImage] Error generating A1111 string: {str(compat_error)}")
+                    a1111_parameters = ""
+
             # Format-specific parameters
             format_params = self._get_format_parameters(**kwargs)
+            format_params['embed_workflow'] = kwargs.get('embed_workflow', True)
+            if a1111_parameters:
+                format_params['a1111_parameters'] = a1111_parameters
             
             # Get file format and extension
             file_format = kwargs.get("file_format", "png").lower()
@@ -2370,16 +2570,24 @@ class MetadataAwareSaveImage:
 
                         # For formats that need advanced alpha handling
                         elif file_format in ["jpg", "jpeg"]:
+                            matte_color = format_params.get("matte_color")
+                            save_alpha = format_params.get("save_alpha_separately", False)
+                            alpha_kwargs = {
+                                key: value
+                                for key, value in format_params.items()
+                                if key not in {"matte_color", "save_alpha_separately"}
+                            }
+
                             success, alpha_path = self._save_with_advanced_alpha(
-                                image, 
-                                "JPEG", 
-                                image_path, 
-                                metadata=metadata, 
-                                matte_color=format_params["matte_color"], 
-                                save_alpha=format_params["save_alpha_separately"],
-                                prompt=prompt, 
+                                image,
+                                "JPEG",
+                                image_path,
+                                metadata=metadata,
+                                matte_color=matte_color,
+                                save_alpha=save_alpha,
+                                prompt=prompt,
                                 extra_pnginfo=extra_pnginfo,
-                                **format_params
+                                **alpha_kwargs,
                             )
                             
                             # Add alpha path to results if saved
@@ -2430,7 +2638,17 @@ class MetadataAwareSaveImage:
                         # Try to save additional format if requested
                         additional_format = kwargs.get('additional_format', 'None')
                         if additional_format != 'None':
-                            additional_path = self._save_additional_format(image, image_path, metadata=metadata, prompt=prompt, extra_pnginfo=extra_pnginfo, **kwargs)
+                            additional_kwargs = dict(kwargs)
+                            if a1111_parameters:
+                                additional_kwargs['a1111_parameters'] = a1111_parameters
+                            additional_path = self._save_additional_format(
+                                image,
+                                image_path,
+                                metadata=metadata,
+                                prompt=prompt,
+                                extra_pnginfo=extra_pnginfo,
+                                **additional_kwargs
+                            )
                             if additional_path:
                                 # Add to results list
                                 results.append(additional_path)
@@ -2469,12 +2687,75 @@ class MetadataAwareSaveImage:
                                 if kwargs.get("title") and not metadata.get('basic', {}).get('title'):
                                     metadata['basic']['title'] = kwargs.get("title")
 
-                                # Now write metadata with targets
-                                self.metadata_service.write_metadata(
-                                    image_path, 
-                                    metadata, 
-                                    targets=targets_to_use
+                                pointer_map = self._build_sidecar_pointer_map(
+                                    image_path,
+                                    metadata_targets,
+                                    kwargs.get("save_workflow_as_json", False),
                                 )
+
+                                pointer_map = self._ensure_runtime_sidecar(
+                                    image_path,
+                                    metadata,
+                                    pointer_map,
+                                )
+
+                                if file_format in ("jpg", "jpeg") and "embedded" in targets_to_use:
+                                    embedded_metadata, fallback_stage = self._compute_jpeg_metadata_fallback(
+                                        metadata,
+                                        pointer_map,
+                                    )
+
+                                    telemetry_message = self._format_jpeg_fallback_ui_entry(
+                                        image_path,
+                                        fallback_stage,
+                                        pointer_map if fallback_stage == "sidecar" else None,
+                                    )
+                                    if telemetry_message:
+                                        telemetry_events.append(telemetry_message)
+
+                                    self._inject_provenance(
+                                        metadata,
+                                        fallback_stage,
+                                        pointer_map if fallback_stage == "sidecar" else None,
+                                        {
+                                            "image_path": image_path,
+                                            "target": "sidecar" if fallback_stage == "sidecar" else "non_embedded",
+                                        },
+                                    )
+
+                                    non_embedded_targets = [t for t in targets_to_use if t != "embedded"]
+                                    if non_embedded_targets:
+                                        self.metadata_service.write_metadata(
+                                            image_path,
+                                            metadata,
+                                            targets=non_embedded_targets,
+                                        )
+
+                                    if fallback_stage != "full":
+                                        print(
+                                            f"[MetadataSaveImage] JPEG metadata fallback applied to {os.path.basename(image_path)}: {fallback_stage}")
+
+                                    self._inject_provenance(
+                                        embedded_metadata,
+                                        fallback_stage,
+                                        pointer_map if fallback_stage == "sidecar" else None,
+                                        {
+                                            "image_path": image_path,
+                                            "target": "embedded",
+                                        },
+                                    )
+
+                                    self.metadata_service.write_metadata(
+                                        image_path,
+                                        embedded_metadata,
+                                        targets=["embedded"],
+                                    )
+                                else:
+                                    self.metadata_service.write_metadata(
+                                        image_path,
+                                        metadata,
+                                        targets=targets_to_use,
+                                    )
                         except Exception as meta_error:
                             errors.append(f"Metadata writing error: {str(meta_error)}")
                             print(f"[MetadataSaveImage] Error writing metadata: {str(meta_error)}")
@@ -2515,7 +2796,7 @@ class MetadataAwareSaveImage:
                 print(f"  {i+1}. {error}")
 
         # Create proper UI data for ComfyUI to display the images
-        ui = self._prepare_ui_data(ui_results if ui_results else results, subfolder)
+        ui = self._prepare_ui_data(ui_results if ui_results else results, subfolder, telemetry_events)
         
         if self.debug and 'images' in ui:
             print(f"[DEBUG] UI display paths for {len(ui['images'])} images:")
@@ -2559,10 +2840,17 @@ class MetadataAwareSaveImage:
             embed_workflow = kwargs.get('additional_format_embed_workflow', False)
             color_profile_name = kwargs.get('additional_format_color_profile', 'sRGB v4 Appearance')
             
+            a1111_parameters = kwargs.get('a1111_parameters', "")
+
             # Prepare workflow data if needed
             workflow_pnginfo = None
-            if embed_workflow and additional_format.lower() == 'png' and prompt:
-                workflow_pnginfo = self._prepare_workflow_pnginfo(prompt, extra_pnginfo)
+            if additional_format.lower() == 'png':
+                workflow_pnginfo = self._prepare_workflow_pnginfo(
+                    prompt,
+                    extra_pnginfo,
+                    embed_workflow=embed_workflow,
+                    a1111_parameters=a1111_parameters if a1111_parameters else None
+                )
             
             # Get color profile data
             color_profile_data = self._get_color_profile(color_profile_name)
@@ -2602,12 +2890,22 @@ class MetadataAwareSaveImage:
                 if pil_image.mode != 'RGB':
                     pil_image = pil_image.convert('RGB')
                     
+                jpeg_options = {
+                    'quality': format_params['jpg_quality'],
+                    'optimize': True,
+                    'icc_profile': color_profile_data
+                }
+                if a1111_parameters:
+                    try:
+                        jpeg_options['comment'] = a1111_parameters.encode('utf-8', errors='replace')
+                    except Exception as comment_err:
+                        if self.debug:
+                            print(f"[MetadataSaveImage] Unable to embed A1111 comment in additional JPEG: {comment_err}")
+
                 pil_image.save(
-                    additional_path, 
-                    format='JPEG', 
-                    quality=format_params['jpg_quality'], 
-                    optimize=True,
-                    icc_profile=color_profile_data
+                    additional_path,
+                    format='JPEG',
+                    **jpeg_options
                 )
                 success = True
                 
@@ -3396,6 +3694,644 @@ class MetadataAwareSaveImage:
             "apng_loops": apng_loops
         }
     
+    def _build_sidecar_pointer_map(self, image_path, metadata_targets, include_json):
+        base_name = os.path.splitext(os.path.basename(image_path))[0]
+        pointers = {}
+
+        if include_json:
+            pointers["json"] = f"{base_name}.json"
+
+        if "txt" in metadata_targets:
+            pointers["txt"] = f"{base_name}.txt"
+
+        return pointers or None
+
+    @staticmethod
+    def _collect_prompt_identifiers(prompt, extra_pnginfo=None):
+        identifiers: List[str] = []
+
+        def add_candidate(value):
+            if value is None:
+                return
+            candidate = str(value).strip()
+            if candidate and candidate not in identifiers:
+                identifiers.append(candidate)
+
+        def inspect(source):
+            if not isinstance(source, dict):
+                return
+            if "prompt_id" in source:
+                add_candidate(source.get("prompt_id"))
+                return
+            for key in ("id", "uuid"):
+                if key in source:
+                    if key == "id" and not any(field in source for field in ("prompt", "nodes", "workflow")):
+                        continue
+                    add_candidate(source.get(key))
+
+        inspect(prompt)
+        inspect(extra_pnginfo)
+        return identifiers
+
+    @staticmethod
+    def _safe_prompt_equals(left, right) -> bool:
+        try:
+            return left == right
+        except Exception:
+            return False
+
+    def _consume_runtime_session(self, prompt, extra_pnginfo=None) -> Optional["HookSession"]:
+        identifiers = self._collect_prompt_identifiers(prompt, extra_pnginfo)
+
+        for prompt_id in identifiers:
+            session = runtime_capture.consume_session(prompt_id)
+            if session:
+                return session
+
+        if prompt is None:
+            return None
+
+        try:
+            for active_id in runtime_capture.active_prompt_ids():
+                snapshot = runtime_capture.get_session(active_id)
+                if snapshot and self._safe_prompt_equals(snapshot.prompt_payload, prompt):
+                    consumed = runtime_capture.consume_session(active_id)
+                    if consumed:
+                        return consumed
+        except Exception as exc:
+            if self.debug:
+                print(f"[MetadataSaveImage] Unable to match runtime session via payload comparison: {exc}")
+
+        return None
+
+    @staticmethod
+    def _build_node_lookup(prompt, extra_pnginfo=None):
+        lookup: Dict[str, Dict[str, Any]] = {}
+        visited: set[int] = set()
+
+        def register_node(node: Dict[str, Any], key_hint=None) -> None:
+            if not isinstance(node, dict):
+                return
+            node_id = node.get("id")
+            if node_id is None and key_hint is not None:
+                node_id = key_hint
+            if node_id is None:
+                meta = node.get("_meta")
+                if isinstance(meta, dict) and meta.get("id") is not None:
+                    node_id = meta.get("id")
+            if node_id is None:
+                return
+            lookup.setdefault(str(node_id), node)
+
+        def traverse(obj, key_hint=None):
+            if isinstance(obj, dict):
+                obj_id = id(obj)
+                if obj_id in visited:
+                    return
+                visited.add(obj_id)
+
+                if "class_type" in obj and "inputs" in obj:
+                    register_node(obj, key_hint)
+
+                for key, value in obj.items():
+                    if isinstance(value, dict) and "class_type" in value and "inputs" in value:
+                        register_node(value, key)
+                    traverse(value, key)
+            elif isinstance(obj, (list, tuple)):
+                for item in obj:
+                    traverse(item)
+
+        traverse(prompt)
+        if isinstance(extra_pnginfo, dict):
+            traverse(extra_pnginfo.get("workflow"))
+            traverse(extra_pnginfo.get("prompt"))
+
+        return lookup
+
+    @staticmethod
+    def _build_runtime_nodes(session, node_lookup):
+        runtime_nodes: Dict[str, Dict[str, Any]] = {}
+        if session is None:
+            return runtime_nodes
+
+        resolved = getattr(session, "resolved_inputs", {})
+        if not isinstance(resolved, dict):
+            return runtime_nodes
+
+        for node_id, values in resolved.items():
+            if not isinstance(values, dict) or not values:
+                continue
+
+            sanitized_inputs = {}
+            for key, value in values.items():
+                if isinstance(value, (str, int, float, bool)):
+                    sanitized_inputs[key] = value
+
+            if not sanitized_inputs:
+                continue
+
+            node_key = str(node_id)
+            node = node_lookup.get(node_key)
+            class_type = ""
+            if isinstance(node, dict):
+                class_type = node.get("class_type", "")
+
+            runtime_node: Dict[str, Any] = {
+                "class_type": class_type or "unknown",
+                "inputs": sanitized_inputs,
+            }
+
+            if isinstance(node, dict):
+                meta = node.get("_meta")
+                if isinstance(meta, dict):
+                    runtime_node["_meta"] = meta
+
+            runtime_nodes[node_key] = runtime_node
+
+        return runtime_nodes
+
+    @staticmethod
+    def _extract_node_title(node: Optional[Dict[str, Any]]) -> str:
+        if not isinstance(node, dict):
+            return ""
+
+        for key in ("title", "label", "name"):
+            value = node.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+
+        meta = node.get("_meta")
+        if isinstance(meta, dict):
+            for key in ("title", "label", "name"):
+                value = meta.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+
+        return ""
+
+    @staticmethod
+    def _deep_override(destination: Dict[str, Any], source: Dict[str, Any], path_prefix: List[str], changes: Optional[List[Dict[str, Any]]] = None):
+        if changes is None:
+            changes = []
+
+        if not isinstance(source, dict):
+            return changes
+
+        for key, value in source.items():
+            current_path = path_prefix + [str(key)]
+
+            if isinstance(value, dict):
+                target = destination.get(key)
+                if not isinstance(target, dict):
+                    target = {}
+                    destination[key] = target
+                MetadataAwareSaveImage._deep_override(target, value, current_path, changes)
+                continue
+
+            if value is None:
+                continue
+
+            if isinstance(value, str) and not value.strip():
+                continue
+
+            if isinstance(value, list) and not value:
+                continue
+
+            if destination.get(key) != value:
+                destination[key] = value
+                changes.append({"path": ".".join(current_path), "value": value})
+
+        return changes
+
+    @staticmethod
+    def _overlay_runtime_ai_info(metadata: Dict[str, Any], runtime_metadata: Dict[str, Any]):
+        overrides: List[Dict[str, Any]] = []
+
+        runtime_ai = runtime_metadata.get("ai_info") if isinstance(runtime_metadata, dict) else None
+        if not isinstance(runtime_ai, dict):
+            return overrides
+
+        target_ai = metadata.setdefault("ai_info", {})
+
+        runtime_generation = runtime_ai.get("generation")
+        if isinstance(runtime_generation, dict):
+            generation_target = target_ai.setdefault("generation", {})
+            overrides = MetadataAwareSaveImage._deep_override(
+                generation_target,
+                runtime_generation,
+                ["ai_info", "generation"],
+                overrides,
+            )
+
+        for key, value in runtime_ai.items():
+            if key == "generation":
+                continue
+
+            if isinstance(value, dict):
+                section_target = target_ai.get(key)
+                if not isinstance(section_target, dict):
+                    section_target = {}
+                    target_ai[key] = section_target
+                overrides = MetadataAwareSaveImage._deep_override(
+                    section_target,
+                    value,
+                    ["ai_info", key],
+                    overrides,
+                )
+                continue
+
+            if value is None:
+                continue
+            if isinstance(value, str) and not value.strip():
+                continue
+
+            if target_ai.get(key) != value:
+                target_ai[key] = value
+                overrides.append({"path": f"ai_info.{key}", "value": value})
+
+        return overrides
+
+    @staticmethod
+    def _integrate_runtime_session(
+        metadata: Dict[str, Any],
+        session: Optional["HookSession"],
+        prompt=None,
+        extra_pnginfo=None,
+    ):
+        if metadata is None or session is None:
+            return None
+
+        node_lookup = MetadataAwareSaveImage._build_node_lookup(prompt, extra_pnginfo)
+        runtime_nodes = MetadataAwareSaveImage._build_runtime_nodes(session, node_lookup)
+
+        runtime_metadata: Dict[str, Any] = {}
+        if runtime_nodes:
+            runtime_metadata = extract_by_parameter_mapping(runtime_nodes, debug=False)
+
+        overrides = MetadataAwareSaveImage._overlay_runtime_ai_info(metadata, runtime_metadata)
+
+        runtime_block: Dict[str, Any] = {
+            "prompt_id": getattr(session, "prompt_id", "unknown"),
+            "capture_version": 1,
+        }
+
+        try:
+            runtime_block["started_at"] = datetime.datetime.fromtimestamp(
+                float(getattr(session, "start_ts", time.time())),
+                datetime.timezone.utc,
+            ).isoformat()
+        except Exception:
+            runtime_block["started_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+        runtime_block["captured_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+        events = getattr(session, "events", None)
+        if isinstance(events, list) and events:
+            runtime_block["events"] = copy.deepcopy(events)
+
+        errors = getattr(session, "errors", None)
+        if isinstance(errors, list) and errors:
+            runtime_block["errors"] = list(errors)
+
+        if runtime_nodes:
+            inputs_payload: Dict[str, Any] = {}
+            for node_id, node_data in runtime_nodes.items():
+                entry = {
+                    "class_type": node_data.get("class_type", "unknown"),
+                    "values": node_data.get("inputs", {}),
+                }
+                title = MetadataAwareSaveImage._extract_node_title(node_lookup.get(node_id))
+                if title:
+                    entry["title"] = title
+                inputs_payload[node_id] = entry
+            runtime_block["inputs"] = inputs_payload
+
+        if overrides:
+            runtime_block["overrides_applied"] = overrides
+
+        payload_size = 0
+        try:
+            payload_size = len(json.dumps(runtime_block, ensure_ascii=False).encode("utf-8"))
+        except Exception:
+            payload_size = MetadataAwareSaveImage.RUNTIME_INLINE_LIMIT + 1
+
+        full_payload = None
+        inline_block = runtime_block
+
+        if payload_size > MetadataAwareSaveImage.RUNTIME_INLINE_LIMIT:
+            full_payload = runtime_block
+            inline_block = {
+                "prompt_id": runtime_block.get("prompt_id", "unknown"),
+                "capture_version": runtime_block.get("capture_version", 1),
+                "started_at": runtime_block.get("started_at"),
+                "captured_at": runtime_block.get("captured_at"),
+                "summary": {
+                    "inputs_tracked": len(runtime_block.get("inputs", {})),
+                    "events_recorded": len(runtime_block.get("events", [])),
+                    "errors_recorded": len(runtime_block.get("errors", [])) if isinstance(runtime_block.get("errors"), list) else 0,
+                },
+                "sidecar_pending": True,
+            }
+
+            if overrides:
+                inline_block["overrides_applied"] = overrides
+
+            if runtime_block.get("events"):
+                inline_block["events_preview"] = runtime_block["events"][:5]
+
+            if runtime_block.get("inputs"):
+                inline_block["inputs_preview"] = sorted(runtime_block["inputs"].keys())[:10]
+
+        ai_info = metadata.setdefault("ai_info", {})
+        provenance = ai_info.setdefault("provenance", {})
+        provenance["capture_mode"] = "parser+hooks"
+        ai_info["runtime"] = inline_block
+
+        return inline_block, full_payload
+
+    def _merge_runtime_capture(
+        self,
+        metadata: Dict[str, Any],
+        prompt=None,
+        extra_pnginfo=None,
+    ) -> Optional[Dict[str, Any]]:
+        try:
+            session = self._consume_runtime_session(prompt, extra_pnginfo)
+        except Exception as exc:
+            if self.debug:
+                print(f"[MetadataSaveImage] Runtime session lookup failed: {exc}")
+            session = None
+
+        if not session:
+            return None
+
+        runtime_block, sidecar_payload = self._integrate_runtime_session(
+            metadata,
+            session,
+            prompt,
+            extra_pnginfo,
+        )
+
+        if sidecar_payload:
+            self._runtime_sidecar_payload = sidecar_payload
+            self._runtime_sidecar_ref = None
+        else:
+            self._runtime_sidecar_payload = None
+            self._runtime_sidecar_ref = None
+
+        if self.debug and runtime_block:
+            overrides = runtime_block.get("overrides_applied") or []
+            print(
+                f"[MetadataSaveImage] Runtime capture applied with {len(overrides)} override(s)"
+            )
+
+        return runtime_block
+
+    def _ensure_runtime_sidecar(self, image_path: str, metadata: Dict[str, Any], pointer_map: Optional[Dict[str, Any]]):
+        ai_info = metadata.get("ai_info") if isinstance(metadata, dict) else None
+        runtime_block = ai_info.get("runtime") if isinstance(ai_info, dict) else None
+
+        if not isinstance(runtime_block, dict):
+            return pointer_map
+
+        pending = runtime_block.get("sidecar_pending")
+        needs_sidecar = pending or self._runtime_sidecar_payload or self._runtime_sidecar_ref
+
+        if not needs_sidecar:
+            return pointer_map
+
+        runtime_filename = self._runtime_sidecar_ref
+
+        if runtime_filename is None:
+            runtime_path = os.path.splitext(image_path)[0] + ".runtime.json"
+            try:
+                with open(runtime_path, "w", encoding="utf-8") as handle:
+                    json.dump(
+                        self._runtime_sidecar_payload or runtime_block,
+                        handle,
+                        indent=2,
+                        ensure_ascii=False,
+                    )
+                runtime_filename = os.path.basename(runtime_path)
+                self._runtime_sidecar_payload = None
+                self._runtime_sidecar_ref = runtime_filename
+            except Exception as exc:
+                if self.debug:
+                    print(f"[MetadataSaveImage] Failed to write runtime sidecar: {exc}")
+                return pointer_map
+
+        runtime_block.pop("sidecar_pending", None)
+        runtime_block["sidecar_ref"] = runtime_filename
+
+        if pointer_map is None:
+            pointer_map = {}
+        pointer_map["runtime"] = runtime_filename
+
+        return pointer_map
+
+    @staticmethod
+    def _estimate_metadata_size(metadata):
+        if not metadata:
+            return 0
+        try:
+            payload = json.dumps(metadata, ensure_ascii=False, separators=(",", ":"))
+            return len(payload.encode("utf-8"))
+        except Exception:
+            return 0
+
+    @staticmethod
+    def _strip_jpeg_heavy_sections(metadata):
+        if not isinstance(metadata, dict):
+            return metadata
+
+        metadata.pop("workflow", None)
+        metadata.pop("workflow_data", None)
+        metadata.pop("prompt_nodes", None)
+
+        ai_info = metadata.get("ai_info")
+        if isinstance(ai_info, dict):
+            for heavy_key in ("workflow", "workflow_data", "workflow_info", "discovery", "prompt_nodes"):
+                ai_info.pop(heavy_key, None)
+
+            generation = ai_info.get("generation")
+            if isinstance(generation, dict):
+                for noisy_key in ("prompt_nodes", "workflow", "workflow_graph"):
+                    generation.pop(noisy_key, None)
+
+        return metadata
+
+    @staticmethod
+    def _condense_lora_entries(loras):
+        condensed = []
+        if not isinstance(loras, list):
+            return condensed
+
+        for entry in loras:
+            if not isinstance(entry, dict):
+                continue
+            name = entry.get("name") or entry.get("title") or entry.get("model")
+            if not name:
+                continue
+
+            payload = {"name": name}
+            for key in ("strength", "strength_model", "strength_clip", "source"):
+                value = entry.get(key)
+                if value not in (None, "", []):
+                    payload[key] = value
+            condensed.append(payload)
+
+        return condensed
+
+    def _build_minimal_jpeg_metadata(self, metadata):
+        minimal = {}
+
+        basic = metadata.get("basic") if isinstance(metadata, dict) else None
+        if isinstance(basic, dict):
+            keep_basic = {key: basic[key] for key in ("title", "creator", "project", "copyright") if basic.get(key)}
+            if keep_basic:
+                minimal["basic"] = keep_basic
+
+        ai_info = metadata.get("ai_info") if isinstance(metadata, dict) else None
+        if isinstance(ai_info, dict):
+            generation = ai_info.get("generation")
+            if isinstance(generation, dict):
+                essentials = {}
+                for key in ("prompt", "negative_prompt", "model", "model_hash", "model_hash_sha256", "seed", "steps", "cfg_scale", "sampler", "scheduler", "width", "height"):
+                    value = generation.get(key)
+                    if value not in (None, "", []):
+                        essentials[key] = value
+
+                loras = generation.get("loras")
+                condensed = self._condense_lora_entries(loras)
+                if condensed:
+                    essentials["loras"] = condensed
+
+                if essentials:
+                    minimal.setdefault("ai_info", {})["generation"] = essentials
+
+        return minimal
+
+    @staticmethod
+    def _inject_provenance(metadata, stage, pointer_data=None, context=None):
+        if not isinstance(metadata, dict):
+            return metadata
+
+        ai_info = metadata.setdefault("ai_info", {})
+        if not isinstance(ai_info, dict):
+            ai_info = {}
+            metadata["ai_info"] = ai_info
+
+        provenance = ai_info.setdefault("provenance", {})
+        if not isinstance(provenance, dict):
+            provenance = {}
+            ai_info["provenance"] = provenance
+
+        provenance["jpeg_fallback_stage"] = stage
+
+        if pointer_data and stage == "sidecar":
+            provenance["metadata_sidecar"] = pointer_data
+        elif stage != "sidecar":
+            provenance.pop("metadata_sidecar", None)
+
+        events = provenance.setdefault("events", [])
+        if not isinstance(events, list):
+            events = []
+            provenance["events"] = events
+
+        recorded_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        event_entry = {
+            "stage": stage,
+            "recorded_at": recorded_at,
+        }
+
+        if pointer_data and stage == "sidecar":
+            event_entry["pointer"] = pointer_data
+        if context:
+            event_entry["context"] = context
+
+        events.append(event_entry)
+
+        return metadata
+
+    @staticmethod
+    def _format_jpeg_fallback_ui_entry(image_path, stage, pointer_data=None):
+        if not stage or stage == "full":
+            return ""
+
+        filename = os.path.basename(image_path) if image_path else ""
+        prefix = f"JPEG metadata fallback"
+        if filename:
+            prefix = f"{prefix} for {filename}"
+
+        explanations = {
+            "reduced": "Trimmed heavy metadata before embedding.",
+            "minimal": "Embedded minimal metadata set due to JPEG limits.",
+            "sidecar": "Stored full metadata in sidecar files.",
+        }
+
+        components = [f"{prefix}: stage '{stage}'"]
+
+        detail = explanations.get(stage)
+        if detail:
+            components.append(detail)
+
+        if stage == "sidecar" and pointer_data:
+            pointer_bits = ", ".join(f"{key}={value}" for key, value in pointer_data.items() if value)
+            if pointer_bits:
+                components.append(f"Sidecar pointers: {pointer_bits}")
+
+        return " | ".join(components)
+
+    def _build_sidecar_placeholder_metadata(self, metadata, pointer_data):
+        placeholder = self._build_minimal_jpeg_metadata(metadata)
+
+        if "basic" not in placeholder and isinstance(metadata, dict):
+            basic = metadata.get("basic")
+            if isinstance(basic, dict):
+                keep_basic = {key: basic[key] for key in ("title", "creator", "project", "copyright") if basic.get(key)}
+                if keep_basic:
+                    placeholder["basic"] = keep_basic
+
+        return placeholder or {}
+
+    def _compute_jpeg_metadata_fallback(self, metadata, pointer_data, max_bytes=60000):
+        def _clone(payload):
+            return copy.deepcopy(payload) if isinstance(payload, dict) else {}
+
+        def _variant(stage_name: str):
+            if stage_name == "full":
+                return _clone(metadata)
+            if stage_name == "reduced":
+                reduced_variant = _clone(metadata)
+                self._strip_jpeg_heavy_sections(reduced_variant)
+                return reduced_variant
+            if stage_name == "minimal":
+                return self._build_minimal_jpeg_metadata(metadata)
+            if stage_name == "sidecar":
+                return self._build_sidecar_placeholder_metadata(metadata, pointer_data)
+            return {}
+
+        chosen_stage = "sidecar"
+        chosen_payload = {}
+
+        for stage_name in ("full", "reduced", "minimal"):
+            candidate = _variant(stage_name)
+            if self._estimate_metadata_size(candidate) <= max_bytes:
+                chosen_stage = stage_name
+                chosen_payload = candidate
+                break
+        else:
+            chosen_payload = _variant("sidecar")
+
+        self._inject_provenance(
+            chosen_payload,
+            chosen_stage,
+            pointer_data if chosen_stage == "sidecar" else None,
+            {"stage_source": "evaluation"},
+        )
+
+        return chosen_payload, chosen_stage
+
     def _save_workflow_json(self, json_path, prompt=None, extra_pnginfo=None):
         """Save workflow data as JSON file"""
         try:
@@ -3548,12 +4484,19 @@ class MetadataAwareSaveImage:
             
             # Prepare save options
             save_options = {}
+            a1111_parameters = kwargs.get('a1111_parameters')
             
             # Format-specific options
             if format.upper() == 'JPEG' or format.upper() == 'JPG':
                 save_options["quality"] = kwargs.get("jpg_quality", 95)
                 save_options["optimize"] = True
                 save_options["progressive"] = True
+                if a1111_parameters:
+                    try:
+                        save_options["comment"] = a1111_parameters.encode('utf-8', errors='replace')
+                    except Exception as comment_err:
+                        if self.debug:
+                            print(f"[MetadataSaveImage] Unable to embed A1111 comment in JPEG (advanced alpha): {comment_err}")
             elif format.upper() == 'WEBP':
                 save_options["quality"] = kwargs.get("webp_quality", 90)
                 save_options["method"] = 4  # Higher quality encoding
@@ -3564,10 +4507,16 @@ class MetadataAwareSaveImage:
             if color_profile_data:
                 save_options["icc_profile"] = color_profile_data
                 
-            # Add workflow info if PNG and requested
-            if format.upper() == 'PNG' and kwargs.get('embed_workflow', True) and prompt:
-                pnginfo = self._prepare_workflow_pnginfo(prompt, extra_pnginfo)
-                save_options["pnginfo"] = pnginfo
+            # Add workflow or compatibility info for PNG outputs
+            if format.upper() == 'PNG':
+                pnginfo = self._prepare_workflow_pnginfo(
+                    prompt,
+                    extra_pnginfo,
+                    embed_workflow=kwargs.get('embed_workflow', True),
+                    a1111_parameters=kwargs.get('a1111_parameters')
+                )
+                if pnginfo:
+                    save_options["pnginfo"] = pnginfo
             
             # Save main image
             processed_image.save(image_path, format=format, **save_options)
@@ -3588,6 +4537,9 @@ class MetadataAwareSaveImage:
         except Exception as e:
             print(f"[MetadataSaveImage] Error in advanced alpha handling: {str(e)}")
             return False, None
+    def _generate_a1111_string(self, metadata: Optional[Dict[str, Any]]) -> str:
+        return generate_a1111_parameters(metadata, format_strength=lambda value: f"{value:.2f}")
+
     def extract_metadata_from_workflow(self, prompt=None, extra_pnginfo=None, **kwargs):
         """
         Extract comprehensive metadata from ComfyUI's workflow data
@@ -3618,7 +4570,17 @@ class MetadataAwareSaveImage:
             }
             
             # Extract metadata using our unified workflow processor
-            metadata = self.workflow_processor.process_workflow_data(prompt, extra_pnginfo)
+            metadata = self.workflow_processor.process_workflow_data(
+                prompt,
+                extra_pnginfo,
+                enable_hash_cache=kwargs.get('enable_hash_cache', True),
+            )
+
+            if isinstance(metadata, dict):
+                ai_info_section = metadata.setdefault('ai_info', {})
+                provenance_section = ai_info_section.setdefault('provenance', {})
+                provenance_section.setdefault('capture_mode', 'parser')
+                self._merge_runtime_capture(metadata, prompt, extra_pnginfo)
             
             # Build additional metadata from node inputs
             node_metadata = self.build_metadata_from_inputs(**kwargs)
@@ -3647,11 +4609,58 @@ class MetadataAwareSaveImage:
             if 'ai_info' in metadata:
                 # Force this to false regardless of the input parameter
                 metadata['ai_info']['include_workflow_in_xmp'] = False
-                
-                # Remove any full workflow data from the metadata
-                if 'generation' in metadata['ai_info']:
-                    for key in ['prompt', 'workflow_data', 'workflow']:
-                        metadata['ai_info']['generation'].pop(key, None)
+
+                generation = metadata['ai_info'].get('generation')
+                if isinstance(generation, dict):
+                    heavy_keys = {
+                        'workflow_data',
+                        'workflow',
+                        'workflow_graph',
+                        'raw_workflow',
+                    }
+                    for key in heavy_keys:
+                        generation.pop(key, None)
+
+                    max_text_len = 8192
+
+                    def _normalize_text_field(field_name: str):
+                        value = generation.get(field_name)
+                        if not isinstance(value, str):
+                            return None
+
+                        trimmed = value.strip()
+                        if not trimmed:
+                            generation.pop(field_name, None)
+                            generation.pop(f"{field_name}_truncated_for_xmp", None)
+                            return None
+
+                        if len(trimmed) > max_text_len:
+                            generation[field_name] = trimmed[:max_text_len]
+                            generation[f"{field_name}_truncated_for_xmp"] = True
+                        else:
+                            generation[field_name] = trimmed
+                            generation.pop(f"{field_name}_truncated_for_xmp", None)
+
+                        return generation[field_name]
+
+                    prompt_value = _normalize_text_field('prompt')
+                    positive_prompt_value = _normalize_text_field('positive_prompt')
+                    negative_prompt_value = _normalize_text_field('negative_prompt')
+
+                    if prompt_value and not positive_prompt_value:
+                        generation['positive_prompt'] = prompt_value
+                    elif not prompt_value and positive_prompt_value:
+                        generation['prompt'] = positive_prompt_value
+
+                    if negative_prompt_value is None:
+                        generation.pop('negative_prompt_truncated_for_xmp', None)
+
+                    prompt_nodes = generation.get('prompt_nodes')
+                    if isinstance(prompt_nodes, list) and len(prompt_nodes) > 25:
+                        generation['prompt_nodes'] = prompt_nodes[:25]
+                        generation['prompt_nodes_truncated_for_xmp'] = len(prompt_nodes)
+                    elif not prompt_nodes:
+                        generation.pop('prompt_nodes_truncated_for_xmp', None)
             
             # Remove any top-level workflow data
             for key in ['workflow', 'prompt', 'workflow_data']:
@@ -3718,13 +4727,14 @@ class MetadataAwareSaveImage:
             self.workflow_extractor.save_html_report(html_report_path)
             print(f"[DEBUG] Saved discovery reports with base path: {base_path_full}")
     
-    def _prepare_ui_data(self, results, subfolder):
+    def _prepare_ui_data(self, results, subfolder, telemetry=None):
         """
         Prepare UI data specifically for ComfyUI node display
         
         Args:
             results: List of image paths
             subfolder: Subfolder for UI display
+            telemetry: Optional list of telemetry strings to display in UI
             
         Returns:
             dict: Formatted UI data
@@ -3807,7 +4817,11 @@ class MetadataAwareSaveImage:
             })
         
         # Return in proper format for ComfyUI
-        return {"images": images}
+        ui_payload = {"images": images}
+        if telemetry:
+            ui_payload["text"] = telemetry
+
+        return ui_payload
     
     def _convert_to_pil(self, image):
         """
@@ -3849,7 +4863,7 @@ class MetadataAwareSaveImage:
         # Already a PIL image
         return image
     
-    def _prepare_workflow_pnginfo(self, prompt=None, extra_pnginfo=None, embed_workflow=True):
+    def _prepare_workflow_pnginfo(self, prompt=None, extra_pnginfo=None, embed_workflow=True, a1111_parameters=None):
         """
         Prepare PNG info with workflow data in ComfyUI-compatible format
         
@@ -3857,48 +4871,56 @@ class MetadataAwareSaveImage:
             prompt: ComfyUI prompt data
             extra_pnginfo: Additional PNG info
             embed_workflow: Whether to include workflow data in PNG
+            a1111_parameters: Optional Automatic1111-compatible parameter string
             
         Returns:
             PngInfo: PNG info object with workflow data if embed_workflow is True, otherwise None
         """
-        if not prompt or not embed_workflow:
-            return None
-
         try:
             from PIL import PngImagePlugin
             
             # Create PngInfo object
             pnginfo = PngImagePlugin.PngInfo()
+            data_added = False
             
             # Only add workflow data if embed_workflow is True
-            if embed_workflow:
+            if embed_workflow and prompt:
                 # Add prompt to PNG info - CRITICAL for ComfyUI workflow loading
-                if prompt:
-                    try:
-                        prompt_json = json.dumps(prompt)
-                        pnginfo.add_text("prompt", prompt_json)
-                        if self.debug:
-                            print(f"[MetadataSaveImage] Added prompt data to PNG info ({len(prompt_json)} bytes)")
-                    except Exception as e:
-                        print(f"[MetadataSaveImage] Error adding prompt to PNG info: {str(e)}")
-                        
-                # Add workflow data from extra_pnginfo - ALSO REQUIRED for loading
-                if extra_pnginfo:
-                    for key, value in extra_pnginfo.items():
-                        try:
-                            if isinstance(value, dict):
-                                value_json = json.dumps(value)
-                                pnginfo.add_text(key, value_json)
-                            elif isinstance(value, str):
-                                pnginfo.add_text(key, value)
-                            else:
-                                pnginfo.add_text(key, str(value))
-                        except Exception as e:
-                            print(f"[MetadataSaveImage] Error adding {key} from extra_pnginfo: {str(e)}")
+                try:
+                    prompt_json = json.dumps(prompt)
+                    pnginfo.add_text("prompt", prompt_json)
+                    data_added = True
                     if self.debug:
-                        print(f"[MetadataSaveImage] Added workflow structure from extra_pnginfo")
+                        print(f"[MetadataSaveImage] Added prompt data to PNG info ({len(prompt_json)} bytes)")
+                except Exception as e:
+                    print(f"[MetadataSaveImage] Error adding prompt to PNG info: {str(e)}")
             
-            return pnginfo
+            # Add workflow data from extra_pnginfo - ALSO REQUIRED for loading
+            if embed_workflow and extra_pnginfo:
+                for key, value in extra_pnginfo.items():
+                    try:
+                        if isinstance(value, dict):
+                            value_json = json.dumps(value)
+                            pnginfo.add_text(key, value_json)
+                        elif isinstance(value, str):
+                            pnginfo.add_text(key, value)
+                        else:
+                            pnginfo.add_text(key, str(value))
+                        data_added = True
+                    except Exception as e:
+                        print(f"[MetadataSaveImage] Error adding {key} from extra_pnginfo: {str(e)}")
+                if self.debug and data_added:
+                    print(f"[MetadataSaveImage] Added workflow structure from extra_pnginfo")
+
+            # Add Automatic1111 compatibility parameters if provided
+            if a1111_parameters:
+                try:
+                    pnginfo.add_text("parameters", a1111_parameters)
+                    data_added = True
+                except Exception as e:
+                    print(f"[MetadataSaveImage] Error adding A1111 parameters to PNG info: {str(e)}")
+            
+            return pnginfo if data_added else None
         except Exception as e:
             print(f"[MetadataSaveImage] Error preparing workflow PNG info: {str(e)}")
             return None
@@ -4051,12 +5073,27 @@ class MetadataAwareSaveImage:
                 apng.save(image_path)
                 
                 # Add metadata via regular PNG metadata if available
-                if metadata and prompt:
+                embed_flag = kwargs.get('embed_workflow', True)
+                a1111_parameters = kwargs.get('a1111_parameters')
+                if prompt or a1111_parameters:
                     try:
                         # We can still add metadata to the APNG file
-                        pnginfo = self._prepare_workflow_pnginfo(prompt, extra_pnginfo)
-                        pil_frames[0].save(image_path, format="PNG", pnginfo=pnginfo, save_all=True, 
-                                        append_images=pil_frames[1:], duration=delay, loop=loops)
+                        pnginfo = self._prepare_workflow_pnginfo(
+                            prompt,
+                            extra_pnginfo,
+                            embed_workflow=embed_flag,
+                            a1111_parameters=a1111_parameters
+                        )
+                        if pnginfo:
+                            pil_frames[0].save(
+                                image_path,
+                                format="PNG",
+                                pnginfo=pnginfo,
+                                save_all=True,
+                                append_images=pil_frames[1:],
+                                duration=delay,
+                                loop=loops
+                            )
                     except Exception as meta_err:
                         print(f"[MetadataSaveImage] Error adding metadata to APNG: {str(meta_err)}")
                 
@@ -4067,8 +5104,13 @@ class MetadataAwareSaveImage:
                 
                 # Get workflow pnginfo
                 pnginfo = None
-                if prompt:
-                    pnginfo = self._prepare_workflow_pnginfo(prompt, extra_pnginfo)
+                if prompt or kwargs.get('a1111_parameters'):
+                    pnginfo = self._prepare_workflow_pnginfo(
+                        prompt,
+                        extra_pnginfo,
+                        embed_workflow=kwargs.get('embed_workflow', True),
+                        a1111_parameters=kwargs.get('a1111_parameters')
+                    )
                 
                 # Save as animated PNG
                 first_frame.save(
@@ -4109,6 +5151,8 @@ class MetadataAwareSaveImage:
         
         # Process based on format
         format = format.upper()
+
+        a1111_parameters = kwargs.get('a1111_parameters')
         
         # Get color profile
         color_profile_name = kwargs.get("color_profile", "sRGB v4 Appearance")
@@ -4131,6 +5175,7 @@ class MetadataAwareSaveImage:
         
         # Prepare save options based on format
         save_options = {}
+        pnginfo = None
         
         if format in ('PNG', 'TIFF', 'PSD', 'WEBP'):
             # Add ICC profile for formats that support it
@@ -4142,10 +5187,13 @@ class MetadataAwareSaveImage:
             save_options["compress_level"] = kwargs.get("png_compression", 6)
             
             # Add workflow info for PNG
-            workflow_pnginfo = None
-            if kwargs.get('embed_workflow', True) and prompt:
-                workflow_pnginfo = self._prepare_workflow_pnginfo(prompt, extra_pnginfo)
-            
+            workflow_pnginfo = self._prepare_workflow_pnginfo(
+                prompt,
+                extra_pnginfo,
+                embed_workflow=kwargs.get('embed_workflow', True),
+                a1111_parameters=a1111_parameters
+            )
+
             # Set pnginfo
             pnginfo = workflow_pnginfo
             
@@ -4153,6 +5201,12 @@ class MetadataAwareSaveImage:
             save_options["quality"] = kwargs.get("jpg_quality", 90)
             save_options["optimize"] = True
             save_options["progressive"] = True
+            if a1111_parameters:
+                try:
+                    save_options["comment"] = a1111_parameters.encode('utf-8', errors='replace')
+                except Exception as comment_err:
+                    if self.debug:
+                        print(f"[MetadataSaveImage] Unable to embed A1111 comment in JPEG: {comment_err}")
             
         elif format == 'WEBP':
             save_options["quality"] = kwargs.get("webp_quality", 90)
@@ -4578,6 +5632,13 @@ class MetadataAwareSaveImageSimple(MetadataAwareSaveImage):
                     {
                         "default": True,
                         "tooltip": "Embed ComfyUI workflow data in PNG files for easy reloading.",
+                    },
+                ),
+                "a1111_compat_mode": (
+                    "BOOLEAN",
+                    {
+                        "default": False,
+                        "tooltip": "Embed Automatic1111-compatible parameter strings in PNG text and JPEG comments.",
                     },
                 ),
             },

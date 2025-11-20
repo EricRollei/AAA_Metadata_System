@@ -1,6 +1,12 @@
 Plan: Metadata System Enhancement with Safe Hook Integration
 This plan focuses on safely collecting more workflow information through backend hooks, improving data structure, and adding ecosystem compatibility—all while maintaining our fault-tolerant "never block save" philosophy.
 
+## Progress (2025-11-15)
+
+- Added `eric_metadata/workflow/generation.py` helpers and rewrote the public `WorkflowParser` wrapper to lean on the shared parsing service.
+- Expanded `tests/prep/test_module_boundaries.py` to exercise the new parser entry points alongside existing traversal checks.
+- Drafted `documentation/jpeg_metadata_touchpoints.md` to catalogue current JPEG embed surfaces ahead of staged fallback work.
+
 Steps
 Implement safe execution hook layer with conflict detection, per-prompt isolation, and auto-disable on errors. Create eric_metadata/hooks/runtime_capture.py that wraps ComfyUI's PromptExecutor.pre_execute and pre_get_input_data, storing lightweight session data keyed by prompt_id. Add env var toggle (AAA_METADATA_ENABLE_HOOKS) defaulting to off.
 

@@ -34,6 +34,8 @@ import folder_paths
 import comfy.sd
 import comfy.utils
 
+from custom_nodes.AAA_Metadata_System.eric_metadata.utils.hash_utils import hash_file_sha256
+
 class MultiLoRALoaderModelOnly:
     """
     Multi-LoRA loader node (MODEL ONLY) that can load up to 8 LoRAs with search/filter capabilities.
@@ -532,15 +534,11 @@ class MultiLoRALoaderModelOnly:
 
     def _calculate_sha256(self, file_path: str) -> str:
         """Calculate SHA256 hash for Civitai API lookup."""
-        sha256_hash = hashlib.sha256()
-        try:
-            with open(file_path, "rb") as f:
-                for chunk in iter(lambda: f.read(4096), b""):
-                    sha256_hash.update(chunk)
-            return sha256_hash.hexdigest()
-        except Exception as e:
-            print(f"[MultiLoRA-ModelOnly] Error calculating SHA256 for {file_path}: {e}")
+        digest = hash_file_sha256(file_path)
+        if digest is None:
+            print(f"[MultiLoRA-ModelOnly] Error calculating SHA256 for {file_path}: unable to read file")
             return ""
+        return digest
 
     def _get_civitai_model_info(self, sha256_hash: str) -> Optional[Dict]:
         """Query Civitai API for model information."""

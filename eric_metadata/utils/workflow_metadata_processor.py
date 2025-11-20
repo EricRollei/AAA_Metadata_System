@@ -32,6 +32,7 @@ import json
 import datetime
 import re
 import traceback
+from pathlib import Path
 from typing import Dict, Any, Optional, List, Union, Tuple
 import numpy as np
 import xml.etree.ElementTree as ET
@@ -39,6 +40,21 @@ import io
 import traceback  # For detailed error tracking in debug mode
 import numpy as np
 from PIL import Image
+
+try:
+    import folder_paths  # type: ignore
+except ImportError:  # pragma: no cover - ComfyUI runtime provides this
+    folder_paths = None
+
+from .hash_utils import hash_file_sha256
+
+from ..workflow import WorkflowParsingService, SamplerCandidate, PromptNodeRef
+
+
+def _normalise_asset_name(value: Any) -> str:
+    if not isinstance(value, str):
+        return ""
+    return re.sub(r"\s+", " ", value).strip()
 
 class WorkflowMetadataProcessor:
     """
@@ -63,6 +79,9 @@ class WorkflowMetadataProcessor:
         
         # Cache for recently processed workflows
         self.extraction_cache = {}
+
+        # Focused helpers for prompt parsing and traversal
+        self._parsing_service = WorkflowParsingService(debug=debug)
         
         # Track discovered node types if in discovery mode
         if discovery_mode:
@@ -70,6 +89,149 @@ class WorkflowMetadataProcessor:
             self.node_type_frequencies = {}
             self.parameter_frequencies = {}
             self.discovery_log = []
+
+    def _resolve_model_path(self, value: Optional[Union[str, Path]]) -> Optional[str]:
+        """Attempt to resolve a model reference to an on-disk file path."""
+
+        if value is None:
+            return None
+
+        if isinstance(value, Path):
+            candidate_path = value.expanduser()
+            if candidate_path.is_file():
+                return str(candidate_path)
+            value = str(candidate_path)
+
+        if not isinstance(value, str):
+            return None
+
+        candidate = value.strip()
+        if not candidate or candidate.lower() == "none":
+            return None
+
+        expanded = os.path.expanduser(candidate)
+
+        potential_paths: List[Path] = []
+
+        # Direct absolute reference
+        path_obj = Path(expanded)
+        if path_obj.is_file():
+            return str(path_obj)
+
+        # Relative path with separators
+        if any(sep in candidate for sep in ("\\", "/")):
+            relative_candidate = Path(candidate)
+            if relative_candidate.is_file():
+                return str(relative_candidate.resolve())
+            potential_paths.append(Path.cwd() / relative_candidate)
+
+        # Try folder_paths lookup when available
+        if folder_paths is not None:
+            folder_map = getattr(folder_paths, "folder_names_and_paths", {})
+            for folder_type in folder_map.keys():
+                try:
+                    resolved = folder_paths.get_full_path(folder_type, candidate)
+                except Exception:
+                    resolved = None
+
+                if resolved:
+                    resolved_path = Path(resolved)
+                    if resolved_path.is_file():
+                        return str(resolved_path)
+
+        # Fall back to first existing potential path
+        for potential in potential_paths:
+            if potential.is_file():
+                return str(potential.resolve())
+
+        return None
+
+    def _populate_model_metadata(self, metadata: Dict[str, Any], enable_hash_cache: bool) -> None:
+        """Enrich extracted metadata with model paths and SHA256 hashes."""
+
+        if not isinstance(metadata, dict):
+            return
+
+        ai_info = metadata.get("ai_info")
+        if not isinstance(ai_info, dict):
+            return
+
+        generation = ai_info.get("generation")
+        if not isinstance(generation, dict):
+            return
+
+        base_model = generation.get("base_model")
+        if not isinstance(base_model, dict):
+            base_model = {}
+            generation["base_model"] = base_model
+
+        # Collect candidate references for path resolution
+        path_candidates: List[Optional[Union[str, Path]]] = [
+            base_model.get("path"),
+            base_model.get("full_path"),
+            base_model.get("model_path"),
+            base_model.get("ckpt_path"),
+        ]
+
+        name_candidates = [
+            base_model.get("name"),
+            base_model.get("model"),
+            base_model.get("unet"),
+            base_model.get("ckpt_name"),
+            generation.get("model"),
+        ]
+
+        path_value: Optional[str] = None
+
+        for candidate in path_candidates:
+            path_value = self._resolve_model_path(candidate)
+            if path_value:
+                break
+
+        if not path_value:
+            for candidate in name_candidates:
+                path_value = self._resolve_model_path(candidate)
+                if path_value:
+                    break
+
+        if not path_value:
+            if self.debug:
+                print("[WorkflowMetadataProcessor] Unable to resolve base model path for hashing")
+            return
+
+        path_obj = Path(path_value)
+        if not path_obj.is_file():
+            return
+
+        if not base_model.get("name"):
+            for candidate in name_candidates:
+                if isinstance(candidate, str) and candidate.strip() and candidate.lower() != "none":
+                    base_model["name"] = candidate.strip()
+                    break
+            else:
+                base_model["name"] = path_obj.name
+
+        digest = hash_file_sha256(path_obj, use_cache=enable_hash_cache)
+        if not digest:
+            return
+
+        short_digest = digest[:8]
+
+        base_model["path"] = str(path_obj)
+        base_model["sha256"] = digest
+        base_model["checksum"] = digest
+        base_model["model_hash_sha256"] = digest
+        base_model["hash"] = short_digest
+        base_model["model_hash"] = short_digest
+        base_model["short_hash"] = short_digest
+
+        generation["model_hash"] = short_digest
+        generation["model_hash_sha256"] = digest
+
+        if self.debug:
+            print(
+                f"[WorkflowMetadataProcessor] Computed base model hash {short_digest} from {path_obj.name}"
+            )
     
     def extract_from_source(self, source_type: str, source_data: Any) -> Dict[str, Any]:
         """
@@ -438,10 +600,16 @@ class WorkflowMetadataProcessor:
             if dimensions:
                 result['generation'].update(dimensions)
             
-            # Extract LoRA info
-            loras = self._extract_lora_info(nodes)
+            # Extract prompt-linked assets (LoRAs, embeddings)
+            loras, embeddings = self._extract_lora_info(nodes, links)
             if loras:
                 result['loras'] = loras
+                generation = result.setdefault('generation', {})
+                generation['loras'] = loras
+            if embeddings:
+                result['embeddings'] = embeddings
+                generation = result.setdefault('generation', {})
+                generation['embeddings'] = embeddings
             
             # Extract VAE info
             vae = self._extract_vae_info(nodes)
@@ -608,93 +776,101 @@ class WorkflowMetadataProcessor:
         search_dict(data)
     
     def _extract_detailed_prompts(self, nodes: Dict[str, Any], links: List[Any], result: Dict[str, Any]) -> None:
-        """
-        Extract prompts with attention to negative prompts and connections.
-        
-        Args:
-            nodes: Workflow nodes
-            links: Workflow links
-            result: Result dictionary to update
-        """
-        positive_prompts = []
-        negative_prompts = []
-        
-        # Initialize prompts in result
+        """Extract prompts and update ``result`` using the parsing service."""
+
+        workflow_stub = {
+            'prompt': {
+                'nodes': nodes,
+                'links': links,
+            }
+        }
+
+        parsed_prompts = self._parsing_service.parse_prompts(workflow_stub)
+
         if 'prompts' not in result:
             result['prompts'] = {'positive': [], 'negative': []}
-        
-        # Identify nodes that contain prompts
-        for node_id, node in nodes.items():
-            node_type = node.get('class_type', '')
-            
-            # Check for CLIP text encode nodes and other text nodes
-            if ('CLIPTextEncode' in node_type or 
-                'Text Multiline' in node_type or 
-                'TextMultiline' in node_type or
-                'Text' in node_type or
-                'String' in node_type) and 'inputs' in node:
-                
-                # Get text from various possible input names
-                text = None
-                for text_input in ['text', 'string', 'String', 'value']:
-                    if text_input in node['inputs'] and node['inputs'][text_input]:
-                        text = str(node['inputs'][text_input]).strip()
-                        break
-                
-                if not text:
+
+        workflow_info = result.setdefault('workflow_info', {})
+        positive_prompts: List[str] = []
+        negative_prompts: List[str] = []
+        ranked_metadata: List[Dict[str, Any]] = []
+
+        best_sampler = self._select_best_sampler_candidate(workflow_stub)
+        if best_sampler:
+            trace_map = self._parsing_service.trace_from_node(
+                workflow_stub,
+                best_sampler.node_id,
+                direction='backward',
+            )
+            if trace_map:
+                workflow_info.setdefault('node_distances', trace_map)
+
+            prompt_nodes = self._find_connected_text_nodes(
+                workflow_stub,
+                best_sampler.node_id,
+                max_depth=5,
+                min_length=5,
+            )
+
+            for node_ref in prompt_nodes:
+                text_value = self._select_prompt_text(node_ref.texts)
+                if not text_value:
                     continue
-                is_negative = False
-                
-                # Check explicit negative flag
-                if 'is_negative' in node and node['is_negative']:
-                    is_negative = True
-                
-                # Check title for "negative" hints
-                if '_meta' in node and 'title' in node['_meta']:
-                    title = node['_meta']['title'].lower()
-                    if 'negative' in title or 'neg' in title:
-                        is_negative = True
-                
-                # Check connections for indication
-                # This is a heuristic that works for many ComfyUI workflows
-                for link in links:
-                    if len(link) >= 4:
-                        # Format: [id, from_node, from_slot, to_node, to_slot, type]
-                        if link[1] == node_id:  # If this node is the source
-                            # Get the target node and input
-                            to_node_id = link[3]
-                            if to_node_id in nodes:
-                                to_node = nodes[to_node_id]
-                                # Check if target has KSampler in its type
-                                if 'KSampler' in to_node.get('class_type', ''):
-                                    # Check if target slot has "negative" in name
-                                    to_slot_idx = link[4]
-                                    inputs = to_node.get('inputs', {})
-                                    if to_slot_idx is not None and isinstance(to_slot_idx, (int, str)):
-                                        input_names = list(inputs.keys())
-                                        if to_slot_idx < len(input_names):
-                                            input_name = input_names[to_slot_idx]
-                                            if 'negative' in input_name or 'neg' in input_name:
-                                                is_negative = True
-                
-                # Store in appropriate list
-                if is_negative:
-                    negative_prompts.append(text)
+
+                metadata_entry = {
+                    'node_id': node_ref.node_id,
+                    'class_type': node_ref.class_type,
+                    'distance': node_ref.distance,
+                    'text': text_value,
+                    'is_negative': node_ref.is_negative,
+                }
+                if node_ref.sources:
+                    metadata_entry['sources'] = node_ref.sources
+                ranked_metadata.append(metadata_entry)
+
+                if node_ref.is_negative:
+                    negative_prompts.append(text_value)
                 else:
-                    positive_prompts.append(text)
-        
-        # Store results
+                    positive_prompts.append(text_value)
+
+                if self.discovery_mode:
+                    self.discovery_log.append(
+                        {
+                            'event': 'prompt_discovery',
+                            'sampler_anchor': best_sampler.node_id,
+                            'node_id': node_ref.node_id,
+                            'distance': node_ref.distance,
+                            'text_length': len(text_value),
+                            'sources': node_ref.sources,
+                        }
+                    )
+
+        if not (positive_prompts or negative_prompts):
+            positive_prompts = [entry.text for entry in parsed_prompts.positive]
+            negative_prompts = [entry.text for entry in parsed_prompts.negative]
+            ranked_metadata = []
+
+        # Deduplicate while preserving order
+        positive_prompts = self._dedupe_preserve_order(positive_prompts)
+        negative_prompts = self._dedupe_preserve_order(negative_prompts)
+
         result['prompts']['positive'] = positive_prompts
         result['prompts']['negative'] = negative_prompts
-        
-        # Update generation data with combined prompts
-        if 'generation' not in result:
-            result['generation'] = {}
-            
+
+        generation = result.setdefault('generation', {})
         if positive_prompts:
-            result['generation']['prompt'] = '\n'.join(positive_prompts)
+            generation['prompt'] = '\n'.join(positive_prompts)
+        else:
+            generation.pop('prompt', None)
         if negative_prompts:
-            result['generation']['negative_prompt'] = '\n'.join(negative_prompts)
+            generation['negative_prompt'] = '\n'.join(negative_prompts)
+        else:
+            generation.pop('negative_prompt', None)
+
+        if ranked_metadata:
+            generation['prompt_nodes'] = ranked_metadata
+        else:
+            generation.pop('prompt_nodes', None)
     
     def _extract_detailed_parameters(self, nodes: Dict[str, Any], links: List[Any], result: Dict[str, Any]) -> None:
         """
@@ -833,8 +1009,8 @@ class WorkflowMetadataProcessor:
             }
         }
         
-        # Initialize parameter storage
-        generation = {}
+        # Initialize parameter storage (reuse existing generation data when available)
+        generation = result.setdefault('generation', {})
         
         # Process each node by type
         for node_id, node in nodes.items():
@@ -961,6 +1137,9 @@ class WorkflowMetadataProcessor:
             if 'timestamp' not in generation:
                 import datetime
                 generation['timestamp'] = datetime.datetime.now().isoformat()
+
+        # Ensure sampler information is captured even for unknown node types
+        self._fallback_sampler_detection(nodes, links, result)
 
     def _build_connection_map(self, links: List[Any]) -> Dict[Tuple[str, int], Tuple[str, int]]:
         """
@@ -1176,127 +1355,356 @@ class WorkflowMetadataProcessor:
         
         return {}
     
-    def _extract_lora_info(self, nodes: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """
-        Extract LoRA information from workflow.
-        
-        Args:
-            nodes: Workflow nodes
-            
-        Returns:
-            list: List of LoRA information dictionaries
-        """
-        loras = []
-        
-        for node_id, node in nodes.items():
-            class_type = node.get('class_type', '')
-            
-            # Check for LoRA nodes - many possible variations
-            # Updated patterns to include MultiLoRALoader and other custom nodes
-            lora_patterns = [
-                'LoRA', 'Lora', 'lora',  # Standard patterns
-                'MultiLoRA', 'Multi_LoRA', 'MultiLora',  # Multi-LoRA patterns
-                'LoraLoader', 'LoRALoader',  # Loader patterns
-                'Power Lora Loader',  # rgthree pattern
-            ]
-            
-            is_lora_node = any(pattern in class_type for pattern in lora_patterns)
-            
-            if is_lora_node:
-                inputs = node.get('inputs', {})
-                
-                # Handle Multi-LoRA Loader specifically
-                if 'MultiLoRA' in class_type or 'Multi_LoRA' in class_type:
-                    # Extract multiple LoRAs from Multi-LoRA Loader
-                    multi_loras = self._extract_multi_lora_info(node_id, class_type, inputs)
-                    loras.extend(multi_loras)
+    def _extract_lora_info(
+        self,
+        nodes: Dict[str, Any],
+        links: List[Any],
+    ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        """Extract LoRA and embedding information from the workflow."""
+        workflow_stub = {
+            'prompt': {
+                'nodes': nodes,
+                'links': links,
+            }
+        }
+
+        discovery = self._parsing_service.discover_assets(workflow_stub)
+        loras: List[Dict[str, Any]] = []
+        embeddings: List[Dict[str, Any]] = []
+
+        def _to_float(value: Any) -> Optional[float]:
+            try:
+                if value is None:
+                    return None
+                return float(value)
+            except (TypeError, ValueError):
+                return None
+
+        for record in discovery.loras:
+            node = nodes.get(record.node_id, {})
+            class_type = node.get('class_type', record.source)
+            clean_name = _normalise_asset_name(record.name)
+            if not clean_name:
+                continue
+            entry: Dict[str, Any] = {
+                'node_id': record.node_id,
+                'type': class_type,
+                'name': clean_name,
+                'source': record.source,
+            }
+
+            extra = record.extra or {}
+
+            if 'slot' in extra:
+                entry['slot'] = extra['slot']
+
+            prompt_role = extra.get('prompt_role')
+            if prompt_role:
+                entry['prompt_role'] = prompt_role
+
+            prompt_node = extra.get('source_prompt')
+            if prompt_node:
+                entry['prompt_node_id'] = prompt_node
+
+            for strength_key in ('strength', 'strength_model', 'strength_clip'):
+                if strength_key in extra:
+                    coerced = _to_float(extra[strength_key])
+                    if coerced is not None:
+                        entry[strength_key] = coerced
+
+            # Derive aggregate strength when not explicitly provided
+            if 'strength' not in entry:
+                strengths = [
+                    entry.get('strength_model'),
+                    entry.get('strength_clip'),
+                ]
+                numeric = [value for value in strengths if isinstance(value, (int, float))]
+                if numeric:
+                    entry['strength'] = sum(numeric) / len(numeric)
                 else:
-                    # Handle single LoRA nodes
-                    lora_info = {
-                        'node_id': node_id,
-                        'type': class_type
-                    }
-                    
-                    # Extract LoRA name
-                    if 'lora_name' in inputs:
-                        lora_info['name'] = inputs['lora_name']
-                    elif 'name' in inputs:
-                        lora_info['name'] = inputs['name']
-                        
-                    # Extract strength parameters
-                    for param in ['strength', 'strength_model', 'strength_clip', 'model_strength', 'clip_strength']:
-                        if param in inputs:
-                            lora_info[param] = inputs[param]
-                    
-                    # Add to result if we found a name
-                    if 'name' in lora_info:
-                        # Add a display strength (average of model/clip if both exist)
-                        if 'strength_model' in lora_info and 'strength_clip' in lora_info:
-                            lora_info['strength'] = (float(lora_info['strength_model']) + float(lora_info['strength_clip'])) / 2
-                        elif 'strength' not in lora_info:
-                            # Default strength
-                            lora_info['strength'] = 1.0
-                        
-                        loras.append(lora_info)
-        
-        return loras
-    
-    def _extract_multi_lora_info(self, node_id: str, class_type: str, inputs: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """
-        Extract LoRA information from Multi-LoRA Loader nodes.
-        
-        Args:
-            node_id: Node identifier
-            class_type: Class type of the node
-            inputs: Input parameters
-            
-        Returns:
-            list: List of LoRA information dictionaries
-        """
-        loras = []
-        
-        # Multi-LoRA Loader typically has numbered LoRA inputs (1-8)
-        for i in range(1, 9):
-            # Multi-LoRA Loader v02 uses these exact patterns:
-            enable_key = f"lora_{i}_enable"
-            name_key = f"lora_{i}_name"
-            strength_key = f"lora_{i}_strength"
-            clip_strength_key = f"lora_{i}_clip_strength"
-            
-            # Check if this slot is enabled and has a LoRA
-            is_enabled = inputs.get(enable_key, False)
-            lora_name = inputs.get(name_key, "None")
-            
-            if is_enabled and lora_name not in [None, "", "None"]:
-                lora_info = {
-                    'node_id': node_id,
-                    'type': class_type,
-                    'name': lora_name,
-                    'slot': i
-                }
-                
-                # Get model strength
+                    entry['strength'] = 1.0
+
+            loras.append(entry)
+
+        aggregated: Dict[str, Dict[str, Any]] = {}
+
+        for entry in loras:
+            key = entry['name'].lower()
+            existing = aggregated.get(key)
+
+            if existing is None:
+                # Track detection sources with a private set
+                entry['_detected_from'] = {entry['source']}
+                aggregated[key] = entry
+                continue
+
+            detected_from = existing.setdefault('_detected_from', {existing['source']})
+            detected_from.add(entry['source'])
+
+            if existing['source'] == 'loader':
+                if entry['source'] == 'inline':
+                    if 'prompt_role' in entry:
+                        existing.setdefault('inline_prompt_role', entry['prompt_role'])
+                    if 'prompt_node_id' in entry:
+                        existing.setdefault('inline_prompt_node_id', entry['prompt_node_id'])
+                continue
+
+            if entry['source'] == 'loader':
+                # Promote loader data while preserving inline provenance
+                carry_inline_role = existing.get('prompt_role') or existing.get('inline_prompt_role')
+                carry_inline_node = existing.get('prompt_node_id') or existing.get('inline_prompt_node_id')
+
+                entry['_detected_from'] = detected_from
+                if carry_inline_role:
+                    entry['inline_prompt_role'] = carry_inline_role
+                if carry_inline_node:
+                    entry['inline_prompt_node_id'] = carry_inline_node
+                aggregated[key] = entry
+                continue
+
+            # Both entries are non-loader (e.g., multiple inline hits). Prefer first, augment metadata.
+            if 'prompt_role' in entry and 'prompt_role' not in existing:
+                existing['prompt_role'] = entry['prompt_role']
+            if 'prompt_node_id' in entry and 'prompt_node_id' not in existing:
+                existing['prompt_node_id'] = entry['prompt_node_id']
+
+        final_loras: List[Dict[str, Any]] = []
+        for entry in aggregated.values():
+            detected = entry.pop('_detected_from', None)
+            if detected:
+                entry['detected_from'] = sorted(detected)
+            final_loras.append(entry)
+
+        for record in discovery.embeddings:
+            node = nodes.get(record.node_id, {})
+            class_type = node.get('class_type', record.source)
+            clean_name = _normalise_asset_name(record.name)
+            if not clean_name:
+                continue
+            entry: Dict[str, Any] = {
+                'node_id': record.node_id,
+                'type': class_type,
+                'name': clean_name,
+                'source': record.source,
+            }
+
+            extra = record.extra or {}
+            prompt_role = extra.get('prompt_role')
+            if prompt_role:
+                entry['prompt_role'] = prompt_role
+
+            prompt_node = extra.get('source_prompt')
+            if prompt_node:
+                entry['prompt_node_id'] = prompt_node
+
+            entry['detected_from'] = [record.source]
+
+            embeddings.append(entry)
+
+        return final_loras, embeddings
+
+    def _fallback_sampler_detection(
+        self,
+        nodes: Dict[str, Any],
+        links: List[Any],
+        result: Dict[str, Any],
+    ) -> None:
+        generation = result.setdefault('generation', {})
+        if generation.get('sampler'):
+            return
+
+        workflow_stub = {
+            'prompt': {
+                'nodes': nodes,
+                'links': links,
+            }
+        }
+
+        best_candidate = self._select_best_sampler_candidate(workflow_stub)
+        if not best_candidate:
+            return
+
+        generation['sampler'] = best_candidate.class_type or 'UnknownSampler'
+        generation['sampler_node_id'] = best_candidate.node_id
+        generation['sampler_detection'] = {
+            'method': 'bfs',
+            'reason': best_candidate.reason,
+            'distance': best_candidate.distance,
+            'priority': best_candidate.priority,
+        }
+
+        self._apply_sampler_inputs_to_generation(generation, best_candidate.inputs)
+        ai_generation = result.setdefault('ai_info', {}).setdefault('generation', generation)
+        if ai_generation is not generation:
+            ai_generation.setdefault('sampler', generation['sampler'])
+            ai_generation.setdefault('sampler_node_id', generation['sampler_node_id'])
+            ai_generation.setdefault('sampler_detection', generation['sampler_detection'])
+            self._apply_sampler_inputs_to_generation(ai_generation, best_candidate.inputs, overwrite=False)
+
+    def _identify_output_nodes(self, nodes: Dict[str, Any]) -> List[str]:
+        anchors: List[str] = []
+        if not isinstance(nodes, dict):
+            return anchors
+
+        for node_id, node in nodes.items():
+            class_type = str(node.get('class_type') or '')
+            lowered = class_type.lower()
+            if any(keyword in lowered for keyword in ('save', 'output', 'preview', 'display', 'export')):
+                anchors.append(str(node_id))
+        return anchors
+
+    def _apply_sampler_inputs_to_generation(
+        self,
+        generation: Dict[str, Any],
+        inputs: Dict[str, Any],
+        *,
+        overwrite: bool = False,
+    ) -> None:
+        if not inputs:
+            return
+
+        def maybe_set(key: str, value: Any) -> None:
+            if value is None:
+                return
+            if overwrite or key not in generation or generation[key] in (None, ""):
+                generation[key] = value
+
+        def coerce_number(value: Any) -> Optional[Union[int, float]]:
+            if isinstance(value, (int, float)):
+                return value
+            if isinstance(value, str):
+                candidate = value.strip()
+                if not candidate:
+                    return None
                 try:
-                    model_strength = float(inputs.get(strength_key, 1.0))
-                    lora_info['strength_model'] = model_strength
-                except (ValueError, TypeError):
-                    model_strength = 1.0
-                    lora_info['strength_model'] = model_strength
-                
-                # Get CLIP strength
-                try:
-                    clip_strength = float(inputs.get(clip_strength_key, 1.0))
-                    lora_info['strength_clip'] = clip_strength
-                except (ValueError, TypeError):
-                    clip_strength = 1.0
-                    lora_info['strength_clip'] = clip_strength
-                
-                # Calculate average strength
-                lora_info['strength'] = (model_strength + clip_strength) / 2
-                
-                loras.append(lora_info)
-        
-        return loras
+                    if '.' in candidate:
+                        return float(candidate)
+                    return int(candidate)
+                except ValueError:
+                    return None
+            return None
+
+        def extract_first(*keys: str) -> Optional[Any]:
+            for key in keys:
+                if key in inputs:
+                    value = inputs[key]
+                    if isinstance(value, list):
+                        continue
+                    return value
+            return None
+
+        steps_value = extract_first('steps', 'step_count')
+        steps_number = coerce_number(steps_value)
+        if steps_number is not None:
+            maybe_set('steps', int(round(steps_number)))
+
+        cfg_value = extract_first('cfg', 'cfg_scale', 'cfg_strength', 'guidance', 'guidance_scale')
+        cfg_number = coerce_number(cfg_value)
+        if cfg_number is not None:
+            maybe_set('cfg_scale', float(cfg_number))
+
+        scheduler_value = extract_first('scheduler', 'schedule', 'scheduler_name')
+        if isinstance(scheduler_value, str) and scheduler_value:
+            maybe_set('scheduler', scheduler_value)
+
+        denoise_value = extract_first('denoise', 'denoise_strength')
+        denoise_number = coerce_number(denoise_value)
+        if denoise_number is not None:
+            maybe_set('denoise', float(denoise_number))
+
+        seed_value = extract_first('seed')
+        seed_number = coerce_number(seed_value)
+        if seed_number is not None:
+            maybe_set('seed', int(round(seed_number)))
+
+    def _select_best_sampler_candidate(
+        self,
+        workflow_stub: Dict[str, Any],
+    ) -> Optional[SamplerCandidate]:
+        prompt_section = workflow_stub.get('prompt', {})
+        raw_nodes = prompt_section.get('nodes', {})
+        if not isinstance(raw_nodes, dict) or not raw_nodes:
+            return None
+
+        links = prompt_section.get('links', [])
+        if not links and isinstance(prompt_section, dict):
+            links = prompt_section.get('connections', [])
+
+        nodes = {str(node_id): node for node_id, node in raw_nodes.items()}
+        normalized_stub = {
+            'prompt': {
+                'nodes': nodes,
+                'links': links,
+            }
+        }
+
+        anchor_ids = self._identify_output_nodes(nodes)
+        if not anchor_ids:
+            anchor_ids = list(nodes.keys())
+
+        best_candidate: Optional[SamplerCandidate] = None
+
+        for anchor in anchor_ids:
+            if anchor not in nodes:
+                continue
+            candidate = self._parsing_service.find_best_sampler(
+                normalized_stub,
+                anchor,
+            )
+            if not candidate:
+                continue
+            if best_candidate is None or (
+                (candidate.priority, candidate.distance) < (best_candidate.priority, best_candidate.distance)
+            ):
+                best_candidate = candidate
+
+        return best_candidate
+
+    def _find_connected_text_nodes(
+        self,
+        workflow_stub: Dict[str, Any],
+        anchor_node: str,
+        *,
+        max_depth: int = 5,
+        min_length: int = 5,
+    ) -> List[PromptNodeRef]:
+        if not anchor_node:
+            return []
+
+        try:
+            return self._parsing_service.discover_text_nodes(
+                workflow_stub,
+                anchor_node,
+                max_depth=max_depth,
+                min_length=min_length,
+            )
+        except Exception:
+            if self.debug:
+                print(
+                    f"[WorkflowMetadataProcessor] discover_text_nodes failed for anchor {anchor_node}",
+                )
+            return []
+
+    @staticmethod
+    def _select_prompt_text(texts: Dict[str, str]) -> Optional[str]:
+        for key in ('prompt', 'text', 'string', 'value'):
+            if key in texts and texts[key]:
+                return texts[key]
+        for value in texts.values():
+            if value:
+                return value
+        return None
+
+    @staticmethod
+    def _dedupe_preserve_order(items: List[str]) -> List[str]:
+        seen = set()
+        ordered: List[str] = []
+        for item in items:
+            if item in seen:
+                continue
+            seen.add(item)
+            ordered.append(item)
+        return ordered
     
     def _extract_vae_info(self, nodes: Dict[str, Any]) -> Optional[str]:
         """
@@ -2305,7 +2713,7 @@ class WorkflowMetadataProcessor:
         
         return metadata
 
-    def process_workflow_data(self, prompt=None, extra_pnginfo=None):
+    def process_workflow_data(self, prompt=None, extra_pnginfo=None, *, enable_hash_cache: bool = True):
         """
         Process workflow data from ComfyUI's prompt and extra_pnginfo structures.
         
@@ -2350,6 +2758,9 @@ class WorkflowMetadataProcessor:
                 if "basic" not in metadata:
                     metadata["basic"] = {}
                 
+                # Enrich with hashes before ensuring XMP compatibility
+                self._populate_model_metadata(metadata, enable_hash_cache)
+
                 # Apply XMP compatibility adjustments
                 metadata = self.ensure_xmp_compatibility(metadata)
                     
@@ -2371,13 +2782,11 @@ class WorkflowMetadataProcessor:
             # Get workflow data and analyze
             workflow = extraction_result.get('workflow', workflow_data)
             analysis_result = self.analyze_workflow(workflow)
-            
-            # Format as metadata
-            return self.format_for_output(analysis_result, 'metadata')
-            
-            # Apply XMP compatibility adjustments
+
+            metadata = self.format_for_output(analysis_result, 'metadata')
+            self._populate_model_metadata(metadata, enable_hash_cache)
             metadata = self.ensure_xmp_compatibility(metadata)
-            
+
             return metadata
 
         except Exception as e:

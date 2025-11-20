@@ -42,6 +42,8 @@ class NamespaceManager:
         'dc': 'http://purl.org/dc/elements/1.1/',
         'xmp': 'http://ns.adobe.com/xap/1.0/',
         'photoshop': 'http://ns.adobe.com/photoshop/1.0/',
+        'xmpRights': 'http://ns.adobe.com/xap/1.0/rights/',
+        'xmpMM': 'http://ns.adobe.com/xap/1.0/mm/',
         'mwg-rs': 'http://www.metadataworkinggroup.com/schemas/regions/',
         'stArea': 'http://ns.adobe.com/xmp/sType/Area#',
         'Iptc4xmpCore': 'http://iptc.org/std/Iptc4xmpCore/1.0/xmlns/',

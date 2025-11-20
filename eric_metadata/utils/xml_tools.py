@@ -211,7 +211,7 @@ class XMLTools:
         
         # Extract namespaces
         nsmap = {}
-        for key, value in re.findall(r'xmlns:(\w+)="([^"]+)"', content):
+        for key, value in re.findall(r'xmlns:([A-Za-z0-9_\-]+)="([^"]+)"', content):
             nsmap[key] = value
             
         # Build result dictionary
@@ -223,6 +223,75 @@ class XMLTools:
             
         return result
     
+    @staticmethod
+    def _process_rdf_container(container: ET.Element, nsmap: Dict[str, str]) -> List[Any]:
+        """Convert an RDF Bag/Seq into a Python list preserving nested descriptions."""
+        rdf_ns = nsmap.get('rdf', 'http://www.w3.org/1999/02/22-rdf-syntax-ns#')
+        items: List[Any] = []
+
+        for li in container.findall(f'{{{rdf_ns}}}li'):
+            if len(li):
+                # Nested description inside the list item
+                desc = li.find(f'{{{rdf_ns}}}Description')
+                if desc is not None:
+                    item_dict: Dict[str, Any] = {}
+                    XMLTools._extract_description_to_dict(desc, item_dict, nsmap)
+                    if item_dict:
+                        items.append(item_dict)
+                    continue
+
+                # Fall back to extracting data directly from the list item
+                fallback_dict: Dict[str, Any] = {}
+                XMLTools._extract_description_to_dict(li, fallback_dict, nsmap)
+                if fallback_dict:
+                    items.append(fallback_dict)
+                    continue
+
+            text = (li.text or '').strip()
+            if text:
+                items.append(text)
+
+        return items
+
+    @staticmethod
+    def _process_alt_container(alt: ET.Element, nsmap: Dict[str, str]) -> Dict[str, Any]:
+        """Convert an RDF Alt container into a lang -> value mapping."""
+        rdf_ns = nsmap.get('rdf', 'http://www.w3.org/1999/02/22-rdf-syntax-ns#')
+        xml_ns = nsmap.get('xml', 'http://www.w3.org/XML/1998/namespace')
+        values: Dict[str, Any] = {}
+
+        for li in alt.findall(f'{{{rdf_ns}}}li'):
+            lang = li.get(f'{{{xml_ns}}}lang', 'x-default')
+            if len(li):
+                desc = li.find(f'{{{rdf_ns}}}Description')
+                if desc is not None:
+                    nested: Dict[str, Any] = {}
+                    XMLTools._extract_description_to_dict(desc, nested, nsmap)
+                    if nested:
+                        values[lang] = nested
+                    continue
+
+                fallback_dict: Dict[str, Any] = {}
+                XMLTools._extract_description_to_dict(li, fallback_dict, nsmap)
+                if fallback_dict:
+                    values[lang] = fallback_dict
+                    continue
+
+            text = (li.text or '').strip()
+            if text:
+                values[lang] = text
+
+        return values
+
+    @staticmethod
+    def _extract_element_attributes(element: ET.Element, nsmap: Dict[str, str]) -> Dict[str, Any]:
+        """Return a simplified mapping of an element's attributes."""
+        attributes: Dict[str, Any] = {}
+        for attr_key, attr_value in element.attrib.items():
+            _, local_name = XMLTools.get_namespace_from_tag(attr_key)
+            attributes[local_name] = attr_value
+        return attributes
+
     @staticmethod
     def _extract_description_to_dict(desc: ET.Element, result: Dict[str, Any], 
                                     nsmap: Dict[str, str]) -> None:
@@ -250,35 +319,37 @@ class XMLTools:
                 # Initialize section if needed
                 section = result.setdefault(prefix, {})
                 
-                # Check for container elements
-                bag = child.find('.//{*}Bag')
-                seq = child.find('.//{*}Seq')
-                alt = child.find('.//{*}Alt')
-                
+                # Check for container elements (Bag/Seq/Alt)
+                bag = child.find(f'{{{nsmap.get("rdf", "http://www.w3.org/1999/02/22-rdf-syntax-ns#")}}}Bag')
+                seq = child.find(f'{{{nsmap.get("rdf", "http://www.w3.org/1999/02/22-rdf-syntax-ns#")}}}Seq')
+                alt = child.find(f'{{{nsmap.get("rdf", "http://www.w3.org/1999/02/22-rdf-syntax-ns#")}}}Alt')
+
                 if bag is not None:
-                    # Process bag items
-                    section[local_name] = [item.text for item in bag.findall('.//{*}li') if item.text]
-                elif seq is not None:
-                    # Process sequence items
-                    section[local_name] = [item.text for item in seq.findall('.//{*}li') if item.text]
-                elif alt is not None:
-                    # Process language alternatives
-                    alt_values = {}
-                    for item in alt.findall('.//{*}li'):
-                        lang = item.get('{http://www.w3.org/XML/1998/namespace}lang', 'x-default')
-                        if item.text:
-                            alt_values[lang] = item.text
-                    section[local_name] = alt_values
-                elif child.text and child.text.strip():
-                    # Simple value
+                    section[local_name] = XMLTools._process_rdf_container(bag, nsmap)
+                    continue
+
+                if seq is not None:
+                    section[local_name] = XMLTools._process_rdf_container(seq, nsmap)
+                    continue
+
+                if alt is not None:
+                    section[local_name] = XMLTools._process_alt_container(alt, nsmap)
+                    continue
+
+                # Complex nested element or attribute-only element
+                nested_desc = child.find(f'{{{nsmap.get("rdf", "http://www.w3.org/1999/02/22-rdf-syntax-ns#")}}}Description')
+                if nested_desc is not None:
+                    nested_dict: Dict[str, Any] = {}
+                    XMLTools._extract_description_to_dict(nested_desc, nested_dict, nsmap)
+                    section[local_name] = nested_dict
+                    continue
+
+                if child.attrib:
+                    section[local_name] = XMLTools._extract_element_attributes(child, nsmap)
+                    continue
+
+                if child.text and child.text.strip():
                     section[local_name] = child.text.strip()
-                else:
-                    # Complex nested element
-                    nested_desc = child.find('.//{*}Description')
-                    if nested_desc is not None:
-                        nested_dict = {}
-                        XMLTools._extract_description_to_dict(nested_desc, nested_dict, nsmap)
-                        section[local_name] = nested_dict
     
     @staticmethod
     def add_list_to_container(parent: ET.Element, container_type: str, 

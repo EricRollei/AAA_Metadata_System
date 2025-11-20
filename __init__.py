@@ -10,6 +10,10 @@ try:
 except ImportError:
     folder_paths = None
 
+# NumExpr logs a noisy warning when it detects many cores without guidance; cap to ComfyUI's default unless user sets it
+if "NUMEXPR_MAX_THREADS" not in os.environ:
+    os.environ["NUMEXPR_MAX_THREADS"] = "8"
+
 # Make this package importable as both its folder name and as 'AAA_Metadata_System'
 # This allows: from AAA_Metadata_System import MetadataService
 sys.modules['AAA_Metadata_System'] = sys.modules.get(__name__, sys.modules[__name__])
@@ -21,6 +25,7 @@ from .eric_metadata.handlers.xmp import XMPSidecarHandler
 from .eric_metadata.handlers.embedded import EmbeddedMetadataHandler
 from .eric_metadata.handlers.txt import TxtFileHandler
 from .eric_metadata.handlers.db import DatabaseHandler
+from .eric_metadata.hooks.runtime_capture import auto_enable_from_env
 
 # Initialize node mappings
 NODE_CLASS_MAPPINGS = {}
@@ -76,6 +81,9 @@ def install_web_extensions():
 
 # Install web extensions
 install_web_extensions()
+
+# Enable runtime hooks if the environment flag requests it (defaults to off).
+auto_enable_from_env()
 
 # Import nodes from the nodes directory
 nodes_dir = get_nodes_dir("nodes")
