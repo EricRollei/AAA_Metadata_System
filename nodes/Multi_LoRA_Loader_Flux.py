@@ -47,10 +47,7 @@ class MultiLoRALoaderFlux(MultiLoRALoaderBase):
         # Get platform-filtered LoRAs (only from Flux directory)
         try:
             lora_options = ["None"] + cls._get_platform_filtered_loras()
-            if len(lora_options) == 1:  # Only "None" means no LoRAs found
-                print(f"[Flux] Warning: No LoRAs found in Flux directory")
         except Exception as e:
-            print(f"[Flux] Error getting LoRA options: {e}")
             lora_options = ["None"]
         
         return {
