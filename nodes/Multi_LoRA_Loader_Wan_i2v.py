@@ -47,10 +47,7 @@ class MultiLoRALoaderWanI2V(MultiLoRALoaderBase):
         # Get platform-filtered LoRAs (only from Wan\i2v directory)
         try:
             lora_options = ["None"] + cls._get_platform_filtered_loras()
-            if len(lora_options) == 1:  # Only "None" means no LoRAs found
-                print(f"[Wan-i2v] Warning: No LoRAs found in Wan\\i2v directory")
         except Exception as e:
-            print(f"[Wan-i2v] Error getting LoRA options: {e}")
             lora_options = ["None"]
         
         return {

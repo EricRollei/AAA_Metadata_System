@@ -124,11 +124,51 @@ class MultiLoRALoaderBase:
         # Initial scan of available LoRAs with platform filter
         self.scan_loras()
     
+    # Class-level cache for platform-filtered LoRAs - shared across all subclasses
+    _lora_cache = {}
+    _lora_cache_logged = set()
+    _startup_complete = False
+    
     @classmethod
     def _get_platform_filtered_loras(cls):
-        """Get LoRAs filtered by platform directory - called at class initialization"""
-        instance = cls()
-        return instance._get_available_loras()
+        """Get LoRAs filtered by platform directory - uses ComfyUI's built-in caching when possible"""
+        cache_key = cls.PLATFORM_DIRECTORY_FILTER or "all"
+        
+        # Use ComfyUI's built-in lora list for faster startup
+        if cache_key not in cls._lora_cache:
+            try:
+                # Get ComfyUI's cached lora list (much faster than scanning ourselves)
+                all_loras = folder_paths.get_filename_list("loras")
+                
+                if cls.PLATFORM_DIRECTORY_FILTER:
+                    # Filter to only include LoRAs from the platform directory
+                    filter_path = cls.PLATFORM_DIRECTORY_FILTER.replace("\\", "/").lower()
+                    filtered = [
+                        lora for lora in all_loras 
+                        if filter_path in lora.replace("\\", "/").lower()
+                    ]
+                    cls._lora_cache[cache_key] = filtered
+                else:
+                    cls._lora_cache[cache_key] = list(all_loras)
+                
+                # Only log once per platform, and only after startup
+                if cache_key not in cls._lora_cache_logged:
+                    count = len(cls._lora_cache[cache_key])
+                    if count == 0 and cls.PLATFORM_DIRECTORY_FILTER:
+                        print(f"[{cls.PLATFORM_NAME}] No LoRAs found in {cls.PLATFORM_DIRECTORY_FILTER} directory")
+                    cls._lora_cache_logged.add(cache_key)
+                    
+            except Exception as e:
+                print(f"[{cls.PLATFORM_NAME}] Error getting LoRA list: {e}")
+                cls._lora_cache[cache_key] = []
+        
+        return cls._lora_cache[cache_key]
+    
+    @classmethod
+    def clear_lora_cache(cls):
+        """Clear the LoRA cache to force a rescan"""
+        cls._lora_cache.clear()
+        cls._lora_cache_logged.clear()
     
     def _load_lora_db(self) -> Dict:
         """Load LoRA database from JSON file"""
@@ -191,7 +231,7 @@ class MultiLoRALoaderBase:
                     print(f"[{self.PLATFORM_NAME}] Error scanning directory {scan_dir} with pattern {pattern}: {e}")
         
         self.lora_paths = sorted(list(temp_lora_paths))
-        print(f"[{self.PLATFORM_NAME}] Found {len(self.lora_paths)} LoRAs")
+        # Note: Logging is handled by _get_platform_filtered_loras to avoid spam
     
     def _calculate_lora_hash(self, file_path: str) -> str:
         """Calculate a hash for the LoRA to use as a unique identifier"""

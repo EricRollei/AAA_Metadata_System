@@ -47,10 +47,7 @@ class MultiLoRALoaderQwen(MultiLoRALoaderBase):
         # Get platform-filtered LoRAs (only from Qwen directory)
         try:
             lora_options = ["None"] + cls._get_platform_filtered_loras()
-            if len(lora_options) == 1:  # Only "None" means no LoRAs found
-                print(f"[Qwen] Warning: No LoRAs found in Qwen directory")
         except Exception as e:
-            print(f"[Qwen] Error getting LoRA options: {e}")
             lora_options = ["None"]
         
         return {
