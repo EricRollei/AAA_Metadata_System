@@ -1,27 +1,52 @@
 [project]
-name = "aaa_metadata_system"
-description = "Advanced metadata management and multi-format image save/load system for ComfyUI including svg, tiff and psd with layer support."
+name = "aaa-metadata-system"
+description = "Advanced metadata management and multi-format image save/load system for ComfyUI including SVG, TIFF, and PSD with layer support."
 readme = "README.md"
-version = "1.0.0"
-license = {file = "LICENSE"}
+version = "0.1.0"
+license = { file = "LICENSE" }
 requires-python = ">=3.8"
-classifiers = [
-	"Operating System :: OS Independent"
+authors = [
+    { name = "Eric Hiss", email = "eric@rollei.us" }
 ]
-dynamic = ["dependencies"]
-
-[tool.setuptools.dynamic]
-dependencies = {file = ["requirements.txt"]}
+maintainers = [
+    { name = "Eric Hiss", email = "eric@rollei.us" }
+]
+keywords = ["comfyui", "metadata", "psd", "svg", "tiff", "xmp", "exif", "image-processing"]
+classifiers = [
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "License :: OSI Approved :: MIT License",
+    "Topic :: Multimedia :: Graphics",
+    "Topic :: Multimedia :: Graphics :: Graphics Conversion"
+]
+dependencies = [
+    "Pillow>=9.0.0",
+    "opencv-python>=4.5.0",
+    "numpy>=1.20.0",
+    "psd-tools>=1.9.0",
+    "pypng>=0.20220715.0",
+    "colorthief>=0.2.1",
+    "imagehash>=4.3.0",
+    "tqdm>=4.65.0",
+    "wordcloud>=1.9.0",
+    "beautifulsoup4>=4.11.0",
+    "markdown>=3.4.0",
+    "requests>=2.28.0"
+]
 
 [project.urls]
 Repository = "https://github.com/EricRollei/AAA_Metadata_System"
-#  Used by Comfy Registry https://registry.comfy.org
 Documentation = "https://github.com/EricRollei/AAA_Metadata_System/wiki"
 "Bug Tracker" = "https://github.com/EricRollei/AAA_Metadata_System/issues"
+Homepage = "https://github.com/EricRollei/AAA_Metadata_System"
 
 [tool.comfy]
-PublisherId = "EricRollei"
-DisplayName = "AAA_Metadata_System"
+PublisherId = "ericrollei"
+DisplayName = "AAA Metadata System"
 Icon = ""
-includes = []
-"requires-comfyui" = ">=1.0.0"  # ComfyUI version compatibility
+requires-comfyui = ">=0.3.0"
