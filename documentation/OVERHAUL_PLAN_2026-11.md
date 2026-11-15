@@ -262,3 +262,40 @@ Working: hooks installed (log line present), model files with resolved paths and
 Not working: positive prompt empty. The prompt reaches TextEncodeQwenImage21 over a link (TextGenerate -> ComfySwitchNode -> PreviewAny). Replaying the same graph offline with a simulated capture entry for the encoder gives the right prompt, so the builder logic is right and the live capture entry for that node is missing, rejected, or lacks the text. Cause not yet known.
 
 Added to find it: `aaa_meta/diagnostics.py` and a 4th output `capture_dump` on the debug node (per upstream node: whether a capture entry exists and is trusted, what each input held, outputs, files).
+
+---
+
+## Update 2026-11-15 (afternoon): live capture confirmed; Lightroom plugin read
+
+### Phase 1 live result
+
+Second live run (same Qwen 2.1 models, nodes at top level, ids 488-501): capture = runtime, the LLM-written prompt (2,801 chars) captured from TextEncodeQwenImage21's resolved input, width/height resolved through the ResolutionSelector link, loaders accepted from an earlier run, all four model hashes from cache, 0 errors.
+
+OPEN: the first live run (nodes inside the template subgraph, ids "459:*", with a ComfySwitchNode and thinking on) returned no prompt. That configuration has not been re-run with capture_dump, so the cause is still unknown. Needs one run of the subgraph version with the dump.
+
+Added after reading the dump:
+- `positive_source` + `prompt_rewriter` on the record: the typed text and the class of the node that rewrote it (here TextGenerate), found by walking back along text links. Also filled in static mode, where the rewritten text is unknowable.
+- Role `prompt_llm` for a text encoder that only feeds the prompt text (the rewriting LLM), separate from the image model's `text_encoder`.
+
+### Sidecars
+
+Eric confirmed: the sidecar-only test file was found in XnView and Capture One, not in Lightroom. The mapping section above stands as written.
+
+### Existing Lightroom plugin (M:\Lighroom_Extension\ComfyUI_Metadata.lrplugin, Jan 2026, unpublished)
+
+How it works: defines 28 custom catalog fields plus a "ComfyUI Workflow" panel view; a menu command runs a Python script per selected PNG that re-parses the embedded workflow JSON (its own class_type table) or an A1111 string; Lua writes the values into the catalog fields and creates keywords under ComfyUI > category > value.
+
+What it shows that plain Lightroom cannot: per-field values (model, seed, steps, sampler...) in the metadata panel, searchable and usable in filters and smart collections.
+
+Limits found in the code:
+- PNG only; reads the workflow JSON, not the XMP namespaces; no measured (eiqa) data.
+- Fifth copy of the class_type parsing table; same blind spots as the old save node (no LLM prompts, no custom samplers).
+- Searchable plugin fields are capped at 512 bytes by Lightroom, so prompts are split into a full field and a truncated searchable preview.
+- Values live in the Lightroom catalog only.
+- One process launch per image through a temp .bat file; hand-written flat JSON parser.
+
+Plan addition - Phase 4b, Lightroom plugin v2:
+- Read the canonical record straight from the file's XMP (generation + measurement namespaces) for every format, no workflow parsing.
+- Add measurement fields (UniPercept, sharpness, noise, composition, exposure...) to the panel view.
+- One batch call for many photos instead of one launch per image.
+- Keep the field ids already in use so catalogs that have the old plugin data keep it.

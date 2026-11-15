@@ -36,9 +36,10 @@ LATENT_LINK_NAMES = ("latent_image", "latent", "samples", "latents")
 _TEXT_HINTS = ("prompt", "text", "caption", "instruction", "positive", "negative",
                "t5xxl", "clip_l", "clip_g", "llama", "string", "tags")
 _TEXT_EXCLUDE = ("system", "preset", "path", "file", "template", "prefix", "mode", "type",
-                 "name", "notes", "meta", "format", "key", "find", "replace", "delimiter")
+                 "name", "notes", "meta", "format", "key", "find", "replace", "delimiter",
+                 "display")
 _NON_PIXEL_LINK_HINTS = ("cond", "positive", "negative", "prompt", "text", "clip", "instruction")
-_ROLE_ORDER = ("checkpoint", "unet", "pipeline", "lora", "text_encoder", "vae")
+_ROLE_ORDER = ("checkpoint", "unet", "pipeline", "lora", "text_encoder", "vae", "prompt_llm")
 _STAGE_KEY = re.compile(r"^s(\d+)_([a-z_]+)$")
 
 CategoryLookup = Callable[[str], Optional[str]]
@@ -220,6 +221,71 @@ class _Builder:
         if not resolved_any:
             return None, guidance
         return "\n".join(pieces), guidance
+
+    # ------------------------------------------------------------------
+    # text links: where the prompt came from, and what only serves the prompt
+    # ------------------------------------------------------------------
+    def _is_text_link(self, node_id: str, name: str) -> bool:
+        """True when this linked input carries text (seen at runtime, else guessed from its name)."""
+        entry = self.resolver.entry(node_id)
+        if entry is not None and name in entry.get("inputs", {}):
+            return isinstance(entry["inputs"][name], str)
+        low = name.lower()
+        return any(h in low for h in ("prompt", "text", "string", "caption", "instruction")) and "cond" not in low
+
+    def _image_path_nodes(self) -> set:
+        """Ancestors of the anchor reached without passing through a text link."""
+        seen = set()
+        queue = deque([self.anchor])
+        while queue:
+            node_id = queue.popleft()
+            if node_id in seen:
+                continue
+            seen.add(node_id)
+            for name, (source, _) in self.graph.links(node_id).items():
+                if source not in seen and not self._is_text_link(node_id, name):
+                    queue.append(source)
+        return seen
+
+    def _find_source_prompt(self, link: Optional[Link], final_text: str) -> Tuple[str, str]:
+        """
+        Walk back along the text that fed the encoder. Returns (typed text, class of
+        the node that rewrote it) when the text the encoder received differs from
+        what was typed upstream; otherwise ("", "").
+        """
+        if link is None or not final_text:
+            return "", ""
+        encoder = link[0]
+        seen = set()
+        queue = deque()
+        for name, (source, _) in self.graph.links(encoder).items():
+            if self._is_text_link(encoder, name) and "neg" not in name.lower():
+                queue.append((source, 1))
+        while queue:
+            node_id, depth = queue.popleft()
+            if node_id in seen or depth > 6:
+                continue
+            seen.add(node_id)
+            links = self.graph.links(node_id)
+            for name, text in self._text_inputs(node_id).items():
+                if "neg" in name.lower() or name in links:
+                    continue
+                if text.strip() != final_text.strip() and len(self.graph.inputs(node_id)) > 1:
+                    return text.strip(), self.graph.class_type(node_id)
+            has_runtime = self.resolver.entry(node_id) is not None
+            for name, (source, _) in links.items():
+                low = name.lower()
+                if "neg" in low or any(x in low for x in ("system", "template", "preset")):
+                    continue
+                if has_runtime:
+                    follow = self._is_text_link(node_id, name)
+                else:
+                    # no runtime data: on the text path, follow anything that is
+                    # not obviously a model or image input
+                    follow = not any(x in low for x in ("clip", "model", "vae", "image", "latent", "mask"))
+                if follow:
+                    queue.append((source, depth + 1))
+        return "", ""
 
     # ------------------------------------------------------------------
     # sampling passes
@@ -408,6 +474,13 @@ class _Builder:
                     continue
                 add(ref)
 
+        # A text encoder that only feeds the prompt text (an LLM that writes the
+        # prompt) is not the image model's text encoder.
+        image_path = self._image_path_nodes()
+        for ref in refs:
+            if ref.role == "text_encoder" and ref.node_id not in image_path:
+                ref.role = "prompt_llm"
+
         def rank(ref: ModelRef) -> int:
             return _ROLE_ORDER.index(ref.role) if ref.role in _ROLE_ORDER else len(_ROLE_ORDER)
 
@@ -466,6 +539,11 @@ class _Builder:
                 else:
                     sampling, pos_link, neg_link, model_link = self._pass_from_custom(node_id, shape == "custom_inline")
                 positive, guidance = self._conditioning_text(pos_link, "positive")
+                if not record.positive_source:
+                    # With no runtime data the rewritten text is unknown; the typed
+                    # text upstream is still worth keeping (old images, backfill).
+                    record.positive_source, record.prompt_rewriter = self._find_source_prompt(
+                        pos_link, positive if positive else "\x00unresolved")
                 negative, _ = self._conditioning_text(neg_link, "negative")
                 sampling.guidance = guidance
                 new_passes = [sampling]

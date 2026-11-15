@@ -58,8 +58,10 @@ class SamplingPass:
 
 @dataclass
 class GenerationRecord:
-    positive: str = ""
+    positive: str = ""                     # the text the image model actually received
     negative: str = ""
+    positive_source: str = ""              # what was typed, when a node rewrote it on the way
+    prompt_rewriter: str = ""              # class type of the node that rewrote it
     models: List[ModelRef] = field(default_factory=list)
     passes: List[SamplingPass] = field(default_factory=list)
     model_chain: List[Dict[str, Any]] = field(default_factory=list)   # patches between loader and sampler
@@ -114,6 +116,9 @@ class GenerationRecord:
     def summary(self) -> str:
         lines: List[str] = [f"capture: {self.capture_mode}"]
         lines.append(f"positive: {self.positive[:300]}{'...' if len(self.positive) > 300 else ''}")
+        if self.positive_source:
+            lines.append(f"source prompt (before {self.prompt_rewriter or 'rewrite'}): "
+                         f"{self.positive_source[:200]}{'...' if len(self.positive_source) > 200 else ''}")
         if self.negative:
             lines.append(f"negative: {self.negative[:200]}{'...' if len(self.negative) > 200 else ''}")
         for model in self.models:

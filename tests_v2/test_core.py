@@ -194,6 +194,39 @@ def test_local_fixtures_do_not_crash():
                 json.dumps(record.to_dict())
 
 
+def test_source_prompt_and_prompt_llm():
+    graph = {
+        "1": {"class_type": "UNETLoader", "inputs": {"unet_name": "m.safetensors"}},
+        "2": {"class_type": "CLIPLoader", "inputs": {"clip_name": "enc.safetensors"}},
+        "3": {"class_type": "CLIPLoader", "inputs": {"clip_name": "llm.safetensors"}},
+        "4": {"class_type": "TextGenerate", "inputs": {"prompt": "a fox", "max_length": 100, "clip": ["3", 0],
+                                                       "system_prompt": ["9", 0]}},
+        "5": {"class_type": "PreviewAny", "inputs": {"source": ["4", 0]}},
+        "6": {"class_type": "DualEncode", "inputs": {"prompt": ["5", 0], "negative_prompt": "", "clip": ["2", 0]}},
+        "7": {"class_type": "KSampler", "inputs": {"seed": 1, "steps": 4, "cfg": 1.0, "sampler_name": "euler",
+                                                   "scheduler": "simple", "denoise": 1.0, "model": ["1", 0],
+                                                   "positive": ["6", 0], "negative": ["6", 1], "latent_image": ["8", 0]}},
+        "8": {"class_type": "EmptyLatentImage", "inputs": {"width": 64, "height": 64, "batch_size": 1}},
+        "9": {"class_type": "PrimitiveStringMultiline", "inputs": {"value": "You rewrite prompts."}},
+        "10": {"class_type": "SaveImage", "inputs": {"images": ["7", 0]}},
+    }
+    def entry(inputs, outputs=None):
+        return {"class_name": "x", "prompt_id": "p", "inputs": inputs, "outputs": outputs or {}, "files": [], "published": {}}
+    captured = {
+        "4": entry({"prompt": "a fox", "max_length": 100, "system_prompt": "You rewrite prompts."}, {0: "A red fox at dawn, long text"}),
+        "5": entry({"source": "A red fox at dawn, long text"}, {0: "A red fox at dawn, long text"}),
+        "6": entry({"prompt": "A red fox at dawn, long text", "negative_prompt": ""}),
+    }
+    record = build_record(PromptGraph.from_prompt(graph), "10", captured, "p")
+    assert record.positive == "A red fox at dawn, long text"
+    assert record.positive_source == "a fox" and record.prompt_rewriter == "TextGenerate"
+    roles = {m.name: m.role for m in record.models}
+    assert roles["enc.safetensors"] == "text_encoder" and roles["llm.safetensors"] == "prompt_llm"
+    # no rewrite: typed text reaches the encoder unchanged -> no source prompt recorded
+    plain = build_record(PromptGraph.from_prompt(BASIC), "8")
+    assert plain.positive_source == "" and plain.prompt_rewriter == ""
+
+
 if __name__ == "__main__":
     failed = 0
     for name, func in sorted(globals().items()):
