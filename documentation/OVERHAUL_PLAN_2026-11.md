@@ -160,3 +160,43 @@ LoRA/checkpoint testers and loaders, colour nodes, word cloud, crop, duplicate f
 3. Keywords: model, LoRAs, sampler and user keywords only; prompt text stays in the description. Option: also add prompt-derived keywords.
 4. Friendly names: keywords use file stems. Option: use display names from comfyui-lora-manager's metadata files when present.
 5. Sidecar .xmp default: off for JPEG/TIFF/PNG (Lightroom ignores it), on only if Phase 0 shows Capture One needs it.
+
+---
+
+## Update 2026-11-14 (evening): decisions, survey, Phase 0 status
+
+### Decisions made
+
+1. Names: save node `MetadataAwareSaveImage_v100` ("Metadata Save Image v1.0"); others bump one revision.
+2. Namespace: domain historic.camera. Prefix `hcai`, URI `http://historic.camera/ns/ai/2.0/`. A new prefix (not `ai`) so old and new files never collide in exiftool configs.
+3. Keywords: model, LoRAs, sampler, user keywords. Prompt text stays in the description.
+4. Model/LoRA keywords keep the whole file stem (the Civitai model and version numbers are the meaningful part).
+5. Baseline committed on `main` (15a8929); work continues on branch `overhaul-v2`.
+
+### Change to Phase 1: hook point
+
+comfyui-lora-manager (installed here) already wraps `execution._async_map_node_over_list` and `execution.execute`. That call receives prompt id, node id, the resolved inputs AND returns the node's outputs. It is a better capture point than `get_input_data`:
+- outputs are available (e.g. the STRING an LLM prompt node returns), not just inputs
+- prompt id and node id arrive as arguments
+- it is already proven to coexist with other wrappers
+
+Phase 1 step 1 therefore wraps `_async_map_node_over_list` (chaining whatever wrapper is already installed), with `get_input_data` as the fallback if the signature differs.
+
+### Survey of other packs (what to take, what to avoid)
+
+- Civitai-compatible savers (ComfyUI-Image-Saver, SaveImageWithMetaData and its forks, SD Prompt Reader's saver): write the A1111 `parameters` string plus model/LoRA/embedding hashes so Civitai auto-detects resources. Take: hashes for every resource in the A1111 string. Avoid: their collection method - either manual wiring of every value, or tracing from a KSampler through a per-node definition table.
+- comfyui-lora-manager: runtime hook as above plus a 57 KB per-node extractor table. Take: the hook point. Avoid: the per-node table (same maintenance trap as our old parser).
+- XMP savers (JH XMP Metadata Nodes, comfyui-save-image-xmp, too-xmp-metadata): embed XMP, but the user builds the strings by wiring. comfyui-save-image-xmp's "layered TIFF" is multi-page, like our old one.
+- Colour: Radiance (FXTD Studios; OCIO/ACES, 32-bit float, EXR), ComfyUI-OCIO, XENodes (SDR-to-HDR, AVIF with CICP tags), ComfyUI-ICC-nodes and comfyui-image-process (load/embed ICC). Take: CICP tagging for AVIF/PNG, an optional ICC-profile input so a profile loaded elsewhere can be used, EXR output as a later option. Out of scope for the save node: scene-referred grading (leave to Radiance/OCIO packs; accept their float images).
+- Nobody surveyed writes catalog-searchable standard fields automatically, real Photoshop-layered TIFF, or reads the result back to verify. Those remain this pack's differentiators.
+
+### Phase 0 status
+
+Built: `tools/make_acceptance_set.py`, `tools/exiftool_hcai.config`.
+Test set: `ComfyUI\output\AAA_acceptance_set\` - PNG, JPEG, TIFF, WebP, PSD, plus a bare PNG with a sidecar-only .xmp. 79 marker tokens, all verified present with exiftool.
+Results sheet: `acceptance_results.csv` in the same folder (one row per token, a column per app).
+
+How to fill it in:
+1. XnView MP first: Settings > Metadata, tick the import options for XMP subject / IPTC keywords, then browse the folder.
+2. Import the folder into Lightroom Classic and Capture One.
+3. In each app, type `zq` in the search box to see everything it indexed, then note per token: S = found by search, V = visible in the metadata panel only, blank = not seen.
