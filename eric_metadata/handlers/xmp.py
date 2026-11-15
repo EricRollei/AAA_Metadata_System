@@ -511,9 +511,7 @@ class XMPSidecarHandler(BaseHandler):
                 title_text = str(title_value)
             
             if title_text:
-                # Apply truncation
-                title_text, was_truncated = self._truncate_text(title_text)
-                
+                # No truncation for sidecar files - write full text
                 # Look for existing title element
                 existing_title = desc.find(f".//{{{self.XMP_NS['dc']}}}title")
                 if existing_title is not None:
@@ -547,9 +545,7 @@ class XMPSidecarHandler(BaseHandler):
                 desc_text = str(desc_value)
             
             if desc_text:
-                # Apply truncation
-                desc_text, was_truncated = self._truncate_text(desc_text)
-                
+                # No truncation for sidecar files - write full text
                 existing_desc = desc.find(f".//{{{self.XMP_NS['dc']}}}description")
                 if existing_desc is not None:
                     li_elem = existing_desc.find(f".//{{{self.XMP_NS['rdf']}}}li[@{{http://www.w3.org/XML/1998/namespace}}lang='x-default']")
@@ -669,9 +665,7 @@ class XMPSidecarHandler(BaseHandler):
                 rights_text = str(rights_value)
             
             if rights_text:
-                # Apply truncation
-                rights_text, was_truncated = self._truncate_text(rights_text)
-                
+                # No truncation for sidecar files - write full text
                 # Add to dc:rights (Dublin Core - for MWG compliance)
                 existing_rights = desc.find(f".//{{{self.XMP_NS['dc']}}}rights")
                 if existing_rights is not None:
@@ -1327,8 +1321,10 @@ class XMPSidecarHandler(BaseHandler):
         
         text = str(value)
         
-        # Apply truncation if max_length specified or text exceeds default limit
-        if max_length or len(text) > cls.MAX_TEXT_LENGTH:
+        # Only truncate if an explicit max_length is provided by the caller.
+        # Sidecar files (.xmp, .txt) have no size constraints so default
+        # truncation is intentionally disabled here.
+        if max_length is not None and len(text) > max_length:
             truncated, was_truncated = cls._truncate_text(text, max_length)
             return truncated
         

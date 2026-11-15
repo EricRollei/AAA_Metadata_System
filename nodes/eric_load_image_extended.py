@@ -35,7 +35,7 @@ class EricLoadImageExtended:
     Extended Load Image node that supports:
     - File picker dialog for easy image selection
     - Additional formats: TIFF, WebP, SVG, PSD
-    - Outputs: IMAGE, MASK, filename, and full path
+    - Outputs: IMAGE, MASK, filename, filename_no_ext, full_path, and path
     """
     
     @classmethod
@@ -63,31 +63,53 @@ class EricLoadImageExtended:
             "required": {
                 "image": (sorted(filtered_files), {"image_upload": True})
             },
+            "optional": {
+                "original_path": ("STRING", {
+                    "default": "",
+                    "multiline": False,
+                    "tooltip": "Optional: Original file path. When provided, path outputs will reflect the original location instead of the ComfyUI input directory."
+                }),
+            },
         }
     
     CATEGORY = "image"
-    RETURN_TYPES = ("IMAGE", "MASK", "STRING", "STRING")
-    RETURN_NAMES = ("image", "mask", "filename", "full_path")
+    RETURN_TYPES = ("IMAGE", "MASK", "STRING", "STRING", "STRING", "STRING")
+    RETURN_NAMES = ("image", "mask", "filename", "filename_no_ext", "full_path", "path")
     FUNCTION = "load_image"
     
-    def load_image(self, image):
+    def load_image(self, image, original_path=None):
         """
-        Load an image and return the image tensor, mask, filename, and full path
+        Load an image and return the image tensor, mask, and path information
         
         Args:
             image: The filename of the image to load
+            original_path: Optional original file path for path outputs
             
         Returns:
-            tuple: (image_tensor, mask_tensor, filename, full_path)
+            tuple: (image_tensor, mask_tensor, filename, filename_no_ext, full_path, path)
         """
-        # Get the full path to the image
+        # Get the full path to the image (in ComfyUI input directory)
         image_path = folder_paths.get_annotated_filepath(image)
         
-        # Extract just the filename without path
-        filename = os.path.basename(image_path)
+        # Determine which path to use for outputs
+        # If original_path is provided and not empty, use it for path-related outputs
+        if original_path is not None and str(original_path).strip():
+            output_full_path = str(original_path).strip()
+            output_filename = os.path.basename(output_full_path)
+            output_filename_no_ext = os.path.splitext(output_filename)[0]
+            output_path = os.path.dirname(output_full_path)
+            # Ensure path ends with separator
+            if output_path and not output_path.endswith(os.sep):
+                output_path = output_path + os.sep
+        else:
+            # Use the ComfyUI input directory path
+            output_full_path = image_path
+            output_filename = os.path.basename(image_path)
+            output_filename_no_ext = os.path.splitext(output_filename)[0]
+            output_path = os.path.dirname(image_path) + os.sep
         
-        # Get file extension
-        file_ext = os.path.splitext(filename)[1].lower()
+        # Get file extension for format detection (always from actual file)
+        file_ext = os.path.splitext(os.path.basename(image_path))[1].lower()
         
         # Handle SVG files (convert to PNG first)
         if file_ext == '.svg':
@@ -142,7 +164,7 @@ class EricLoadImageExtended:
             output_image = output_images[0]
             output_mask = output_masks[0]
         
-        return (output_image, output_mask, filename, image_path)
+        return (output_image, output_mask, output_filename, output_filename_no_ext, output_full_path, output_path)
     
     def _load_svg(self, svg_path, width=1024, height=1024):
         """
@@ -187,7 +209,7 @@ class EricLoadImageExtended:
                 return img
     
     @classmethod
-    def IS_CHANGED(s, image):
+    def IS_CHANGED(s, image, original_path=None):
         """
         Check if the image file has changed
         """
@@ -195,10 +217,13 @@ class EricLoadImageExtended:
         m = hashlib.sha256()
         with open(image_path, 'rb') as f:
             m.update(f.read())
+        # Also include original_path in hash so changes to it trigger re-execution
+        if original_path is not None:
+            m.update(str(original_path).encode('utf-8'))
         return m.digest().hex()
     
     @classmethod
-    def VALIDATE_INPUTS(s, image):
+    def VALIDATE_INPUTS(s, image, original_path=None):
         """
         Validate that the image file exists
         """

@@ -197,19 +197,13 @@ class TxtFileHandler(BaseHandler):
                 
                 if 'prompt' in gen:
                     prompt = gen['prompt']
-                    # Truncate long prompts for readability
-                    if len(prompt) > 200:
-                        content.append(f"    Prompt: {prompt[:200]}...")
-                    else:
-                        content.append(f"    Prompt: {prompt}")
+                    # Write full prompt - no truncation for sidecar files
+                    content.append(f"    Prompt: {prompt}")
                     
                 if 'negative_prompt' in gen:
                     neg_prompt = gen['negative_prompt']
-                    # Truncate long prompts for readability
-                    if len(neg_prompt) > 200:
-                        content.append(f"    Negative prompt: {neg_prompt[:200]}...")
-                    else:
-                        content.append(f"    Negative prompt: {neg_prompt}")
+                    # Write full negative prompt - no truncation for sidecar files
+                    content.append(f"    Negative prompt: {neg_prompt}")
                 
                 for key, value in gen.items():
                     if key not in ['prompt', 'negative_prompt', 'timestamp', 'loras']:
@@ -787,19 +781,13 @@ class TxtFileHandler(BaseHandler):
                     
                     if 'prompt' in gen:
                         prompt = gen['prompt']
-                        # Truncate long prompts for readability
-                        if len(prompt) > 200:
-                            content.append(f"    Prompt: {prompt[:200]}...")
-                        else:
-                            content.append(f"    Prompt: {prompt}")
+                        # Write full prompt - no truncation for sidecar files
+                        content.append(f"    Prompt: {prompt}")
                         
                     if 'negative_prompt' in gen:
                         neg_prompt = gen['negative_prompt']
-                        # Truncate long prompts for readability
-                        if len(neg_prompt) > 200:
-                            content.append(f"    Negative prompt: {neg_prompt[:200]}...")
-                        else:
-                            content.append(f"    Negative prompt: {neg_prompt}")
+                        # Write full negative prompt - no truncation for sidecar files
+                        content.append(f"    Negative prompt: {neg_prompt}")
                     
                     for key, value in gen.items():
                         if key not in ['prompt', 'negative_prompt', 'timestamp', 'loras']:

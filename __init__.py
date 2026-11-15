@@ -80,7 +80,12 @@ def install_web_extensions():
         print(f"[AAA_Metadata_System] Error installing web extensions: {e}")
 
 # Install web extensions
-install_web_extensions()
+# TEMP FIX 2026-11-03: disabled. WEB_DIRECTORY = "./web" (below) already serves these files,
+# so copying them into ComfyUI/web/extensions/MetadataSystem loaded every JS extension twice.
+# See NOTES_2026-11-03_temp_fixes.md
+INSTALL_LEGACY_WEB_COPY = False
+if INSTALL_LEGACY_WEB_COPY:
+    install_web_extensions()
 
 # Enable runtime hooks if the environment flag requests it (defaults to off).
 auto_enable_from_env()
@@ -88,7 +93,8 @@ auto_enable_from_env()
 # Import nodes from the nodes directory
 nodes_dir = get_nodes_dir("nodes")
 for file in os.listdir(nodes_dir):
-    if not file.endswith(".py") or file.startswith("__"):
+    # TEMP FIX 2026-11-03: skip TEMPLATE_ scaffolding files (not real nodes)
+    if not file.endswith(".py") or file.startswith("__") or file.startswith("TEMPLATE_"):
         continue
         
     name = os.path.splitext(file)[0]

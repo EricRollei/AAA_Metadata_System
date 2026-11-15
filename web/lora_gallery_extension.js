@@ -1,4 +1,4 @@
-import { app } from "../scripts/app.js";
+import { app } from "../../scripts/app.js"; // TEMP FIX 2026-11-03: was ../scripts/app.js (resolved to /extensions/scripts/app.js)
 
 console.log("LoRA Gallery Extension: Loading from ComfyUI extensions directory...");
 
