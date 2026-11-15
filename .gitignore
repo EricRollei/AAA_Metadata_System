@@ -140,3 +140,6 @@ temp/
 !documentation/*Documentation.md
 !documentation/*_guide.md
 !documentation/*.md
+
+# v2 local regression fixtures (contain personal prompts)
+tests_v2/fixtures_local/

@@ -90,6 +90,14 @@ if INSTALL_LEGACY_WEB_COPY:
 # Enable runtime hooks if the environment flag requests it (defaults to off).
 auto_enable_from_env()
 
+# v2 capture core (aaa_meta): runtime hooks for automatic metadata collection.
+# Disable with environment variable AAA_META_CAPTURE=0.
+try:
+    from .aaa_meta.capture import install as _install_v2_capture
+    _install_v2_capture()
+except Exception as _capture_error:
+    print(f"[AAA Metadata] v2 capture not installed: {_capture_error}")
+
 # Import nodes from the nodes directory
 nodes_dir = get_nodes_dir("nodes")
 for file in os.listdir(nodes_dir):

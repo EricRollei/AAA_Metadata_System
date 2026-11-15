@@ -200,3 +200,29 @@ How to fill it in:
 1. XnView MP first: Settings > Metadata, tick the import options for XMP subject / IPTC keywords, then browse the folder.
 2. Import the folder into Lightroom Classic and Capture One.
 3. In each app, type `zq` in the search box to see everything it indexed, then note per token: S = found by search, V = visible in the metadata panel only, blank = not seen.
+
+---
+
+## Update 2026-11-14 (night): Phase 1 built
+
+New package `aaa_meta/` (old `eric_metadata/` untouched):
+- `capture/exec_hook.py` - wraps `execution._async_map_node_over_list`; keeps each node's resolved scalar inputs and outputs (last known per node id).
+- `capture/file_loads.py` - wraps `folder_paths.get_full_path(_or_raise)`; records model files per executing node.
+- `graph.py`, `resolve.py` - graph view and value resolution (published > runtime > literal > static follow-through). Stale captures from another workflow are rejected by comparing literals.
+- `models.py` - finds model/LoRA references in plain widgets, dict widgets and JSON state strings, with on/off flags and strengths.
+- `builder.py` - recognises generators by input shape (ksampler / custom-advanced / all-in-one with sN_ stages), reads prompts through the conditioning chain, orders multiple passes.
+- `record.py` - `GenerationRecord`; `hashing.py` - cached SHA-256 (own cache, .sha256 sidecars, LoRA Manager metadata).
+- `runtime.py` + node `Eric_Generation_Record_V1` ("Generation Record (debug) v1").
+- `aaa_meta.publish(...)` - optional call for node authors to state values explicitly.
+- Pack `__init__.py`: 8 added lines to install the hooks (off with env `AAA_META_CAPTURE=0`).
+
+Tests: `tests_v2/test_core.py` (10 tests, synthetic graphs, pass under embedded Python 3.12). `tests_v2/run_fixtures.py` prints the static trace for the 14 local fixtures (git-ignored, personal prompts).
+
+Static-trace results on the 14 real workflows: samplers, seeds, steps, cfg, multi-pass order, models, LoRAs with strengths and disabled LoRAs excluded are right in all 14. The prompt is found statically in 8; the other 6 pass through an LLM / prompt-builder node and need the runtime hook.
+
+NOT YET VERIFIED: the hooks in a live ComfyUI run (ComfyUI was running during the build; they load on next restart). Exit test for Phase 1: restart, add "Generation Record (debug) v1" after VAE decode in the Qwen21 workflow, confirm the LLM-written prompt, seed 'SeedGenerator' value, both passes and the model files appear with capture = runtime.
+
+Known limits to revisit:
+- Unknown-role files on side branches (e.g. depth model for a mask) are listed with role "model"; they never become keywords.
+- Async nodes: outputs are picked up when the task finishes.
+- V3 nodes with dotted dynamic inputs (`values.a`) are read as flat names.
