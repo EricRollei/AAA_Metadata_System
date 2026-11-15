@@ -299,3 +299,24 @@ Plan addition - Phase 4b, Lightroom plugin v2:
 - Add measurement fields (UniPercept, sharpness, noise, composition, exposure...) to the panel view.
 - One batch call for many photos instead of one launch per image.
 - Keep the field ids already in use so catalogs that have the old plugin data keep it.
+
+---
+
+## Update 2026-11-15 (evening): Phase 2 writer built
+
+New modules in `aaa_meta/`:
+- `fields.py` - record + user fields -> standard catalog fields (description = prompt; keywords = model / LoRA / sampler / user; hierarchical AI|Model|..., AI|LoRA|..., AI|Sampler|...; Headline = base model; Instructions = one-line settings summary with seed). No old-style IPTC.
+- `a1111.py` - parameters string with model / VAE / LoRA hashes (PNG chunk; EXIF UserComment on JPEG/WebP).
+- `xmp_packet.py` - one packet builder for every format and for sidecars. Generation data in `hcai` (http://historic.camera/ns/ai/2.0/) as real structures plus a JSON copy; measured data in `eiqa` (http://historic.camera/ns/eiqa/2.0/) as nested structures plus a JSON copy. `merge_packets` replaces our properties, unions keyword lists, keeps everything else. Local model paths are left out of the embedded record unless asked for.
+- `embed.py` - save pixels + metadata in one pass (PNG, JPEG, WebP, TIFF via Pillow); `update_file` adds metadata to an existing file without touching pixels (exiftool; also PSD).
+- `verify.py` - exiftool read-back; reports present / missing / mismatched fields.
+- `writer.py` - `save_with_metadata`, `update_metadata`, `add_analysis`.
+- `tools/write_test_images.py` - writes a real record into one file per format and checks it.
+
+Results on this machine (real record from the live Qwen 2.1 run): PNG, JPEG, TIFF, WebP, PSD all verify OK (14.4 KB packet). Adding sample measurements to the PNG afterwards kept the description, keywords, seed and A1111 chunk and left the record readable. 14 unit tests pass.
+
+JPEG size limit, handled in steps with a warning each time: drop the JSON copy, then the second copy of the prompt, then the A1111 string; beyond about 64 KB of XMP the writer refuses and says to use another format.
+
+Test files for the three apps: `ComfyUI\output\AAA_writer_test\`.
+
+Not yet done in Phase 2: reading files written with the old `ericproject.org` namespaces; ComfyUI workflow embedding for JPEG/WebP (PNG chunks are supported); banded keywords for measurements (waiting on which scores and cut-offs).

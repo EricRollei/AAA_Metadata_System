@@ -227,6 +227,84 @@ def test_source_prompt_and_prompt_llm():
     assert plain.positive_source == "" and plain.prompt_rewriter == ""
 
 
+def _sample_record():
+    from aaa_meta.record import ModelRef, SamplingPass
+    return GenerationRecord(
+        positive="a red fox \x01 & <b> 评估", negative="blurry", positive_source="fox", prompt_rewriter="TextGenerate",
+        models=[ModelRef("unet", "Qwen21\\x\\3370753_red_3258922.safetensors", path="A:\\m.safetensors", sha256="30532b445e" + "0" * 54),
+                ModelRef("lora", "style\\ink.safetensors", strength_model=0.8, sha256="ab" * 32)],
+        passes=[SamplingPass(0, "1", "KSampler", seed=447606998181262, steps=30, cfg=1.0, sampler="lcm", scheduler="beta", denoise=1.0)],
+        width=1536, height=2048, created="2026-11-15T11:54:36-08:00", comfyui_version="0.45.0", capture_mode="runtime")
+
+
+def test_standard_fields_and_a1111():
+    from aaa_meta.a1111 import build_parameters
+    from aaa_meta.fields import UserFields, build_standard_fields
+    record = _sample_record()
+    fields = build_standard_fields(record, UserFields(keywords=["mine", "LCM"], creator="Eric"))
+    assert fields.description == record.positive
+    assert fields.keywords == ["3370753_red_3258922", "ink", "lcm", "mine"]          # de-duplicated, case-insensitive
+    assert fields.hierarchical_keywords == ["AI|Model|3370753_red_3258922", "AI|LoRA|ink", "AI|Sampler|lcm"]
+    assert fields.headline == "3370753_red_3258922"
+    assert fields.instructions == "Steps 30, lcm/beta, CFG 1, Seed 447606998181262, 1536x2048"
+    parameters = build_parameters(record)
+    assert "Negative prompt: blurry" in parameters and "Seed: 447606998181262" in parameters
+    assert "Model hash: 30532b445e" in parameters and '"lora:ink": "ababababab"' in parameters
+
+
+def test_packet_structure_merge_and_roundtrip():
+    import xml.etree.ElementTree as ET
+    from aaa_meta.fields import build_standard_fields
+    from aaa_meta.xmp_packet import NS, build_packet, merge_packets, read_record_json
+    record = _sample_record()
+    packet = build_packet(build_standard_fields(record), record,
+                          {"unipercept": {"iaa": 71.2}, "blur v7": {"regions": [{"x": 1}, {"x": 2}]}})
+    text = packet.decode("utf-8")
+    body = text[text.index("<x:xmpmeta"):text.index("</x:xmpmeta>") + 12]
+    root = ET.fromstring(body)                                   # well-formed, control char removed
+    assert "\x01" not in text and "评估" in text
+    assert "rdf:Description {" not in text                       # the old stringified-struct bug
+    models = root.find(f".//{{{NS['hcai']}}}Models/{{{NS['rdf']}}}Seq")
+    assert len(list(models)) == 2 and models[0].find(f"{{{NS['hcai']}}}AutoV2").text == "30532b445e"
+    assert root.find(f".//{{{NS['eiqa']}}}unipercept/{{{NS['eiqa']}}}iaa").text == "71.2"
+    assert root.find(f".//{{{NS['eiqa']}}}blur_v7") is not None  # key with a space made a valid name
+    data = read_record_json(packet)
+    assert data["passes"][0]["seed"] == 447606998181262
+    assert "path" not in data["models"][0], "local disk paths must not be embedded by default"
+    assert "path" in read_record_json(build_packet(None, record, include_paths=True))["models"][0]
+    old = (b'<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">'
+           b'<rdf:Description rdf:about="" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:xmp="http://ns.adobe.com/xap/1.0/" '
+           b'xmp:Rating="4" xmp:CreatorTool="Old"><dc:subject><rdf:Bag><rdf:li>keepme</rdf:li><rdf:li>ink</rdf:li></rdf:Bag>'
+           b'</dc:subject></rdf:Description></rdf:RDF></x:xmpmeta>')
+    merged = merge_packets(old, packet).decode("utf-8")
+    assert 'Rating="4"' in merged and "keepme" in merged and "Old" not in merged and merged.count(">ink<") == 1
+    # adding analysis later keeps the generation record
+    later = merge_packets(build_packet(build_standard_fields(record), record), build_packet(analysis={"noise": {"level": 0.2}}))
+    assert read_record_json(later)["passes"][0]["steps"] == 30 and "eiqa:noise" in later.decode("utf-8")
+
+
+def test_writer_embeds_in_every_pillow_format():
+    import tempfile
+    from PIL import Image
+    from aaa_meta.embed import read_xmp
+    from aaa_meta.writer import save_with_metadata
+    from aaa_meta.xmp_packet import read_record_json
+    record = _sample_record()
+    image = Image.new("RGB", (32, 32), (10, 90, 160))
+    with tempfile.TemporaryDirectory() as folder:
+        for extension in ("png", "jpg", "webp", "tiff"):
+            path = os.path.join(folder, f"t.{extension}")
+            result = save_with_metadata(image, path, record=record, verify=False)
+            assert result["embedded"] and not result["warnings"], (extension, result)
+            data = read_record_json(read_xmp(path))
+            assert data and data["passes"][0]["seed"] == 447606998181262, extension
+        assert "Seed: 447606998181262" in Image.open(os.path.join(folder, "t.png")).info["parameters"]
+        # JPEG size limit: shrinks in steps and says so
+        record.positive = "word " * 9000
+        big = save_with_metadata(image, os.path.join(folder, "big.jpg"), record=record, verify=False)
+        assert big["embedded"] and big["warnings"] and read_xmp(os.path.join(folder, "big.jpg"))
+
+
 if __name__ == "__main__":
     failed = 0
     for name, func in sorted(globals().items()):
