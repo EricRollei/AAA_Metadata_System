@@ -305,6 +305,73 @@ def test_writer_embeds_in_every_pillow_format():
         assert big["embedded"] and big["warnings"] and read_xmp(os.path.join(folder, "big.jpg"))
 
 
+def test_colour_conversion_reference_values():
+    import numpy as np
+    from aaa_meta import color
+    samples = np.array([[[1.0, 0.0, 0.0], [1.0, 1.0, 1.0], [0.0, 0.0, 0.0]]], dtype=np.float32)
+    adobe = np.rint(color.convert_from_srgb(samples, color.PROFILE_ADOBE)[0] * 255).astype(int).tolist()
+    prophoto = np.rint(color.convert_from_srgb(samples, color.PROFILE_PROPHOTO)[0] * 255).astype(int).tolist()
+    assert adobe == [[219, 0, 0], [255, 255, 255], [0, 0, 0]]          # published sRGB-red in Adobe RGB
+    assert prophoto == [[179, 70, 26], [255, 255, 255], [0, 0, 0]]     # published sRGB-red in ProPhoto
+    assert color.convert_from_srgb(samples, color.PROFILE_SRGB) is samples
+
+
+def test_save_core_true_16bit_and_formats():
+    import struct, tempfile, zlib
+    import numpy as np
+    import tifffile
+    from PIL import Image
+    from aaa_meta import color
+    from aaa_meta.embed import read_xmp
+    from aaa_meta.pixels import to_uint16
+    from aaa_meta.save_core import SaveOptions, describe_result, save_image
+    from aaa_meta.xmp_packet import read_record_json
+    record = _sample_record()
+    ramp = np.linspace(0, 1, 2048, dtype=np.float32)[None, :, None].repeat(4, 0).repeat(3, 2).copy()
+    with tempfile.TemporaryDirectory() as folder:
+        # 16-bit PNG: every one of the 2048 ramp levels must survive (8-bit x 256 would give 256)
+        path = os.path.join(folder, "a.png")
+        result = save_image(ramp, path, SaveOptions(file_format="png", bit_depth=16, verify=False,
+                                                    png_chunks={"prompt": "{}"}), record=record)
+        assert result["bit_depth"] == 16
+        blob = open(path, "rb").read(); pos = 8; idat = b""
+        while pos < len(blob):
+            size, kind = struct.unpack(">I4s", blob[pos:pos + 8])
+            if kind == b"IDAT":
+                idat += blob[pos + 8:pos + 8 + size]
+            pos += 12 + size
+        raw = np.frombuffer(zlib.decompress(idat), dtype=np.uint8).reshape(4, -1)
+        rows = np.cumsum(raw[:, 1:].astype(np.uint64), axis=0).astype(np.uint8).reshape(4, 2048, 3, 2)
+        values = rows[..., 0].astype(np.uint16) * 256 + rows[..., 1]
+        assert np.array_equal(values, to_uint16(ramp)) and len(np.unique(values)) == 2048
+        info = Image.open(path).info
+        assert info.get("prompt") == "{}" and "Seed: 447606998181262" in info.get("parameters", "")
+        assert read_record_json(read_xmp(path))["passes"][0]["steps"] == 30
+        # 16-bit TIFF
+        path = os.path.join(folder, "a.tiff")
+        save_image(ramp, path, SaveOptions(file_format="tiff", bit_depth=16, verify=False), record=record)
+        with tifffile.TiffFile(path) as tif:
+            assert tif.asarray().dtype == np.uint16 and len(np.unique(tif.asarray())) == 2048
+        assert read_record_json(read_xmp(path))
+        # 8-bit formats, RGBA into JPEG flattens instead of failing
+        rgba = np.dstack([ramp, np.full(ramp.shape[:2], 0.5, np.float32)])
+        for fmt in ("jpg", "webp", "tiff", "png"):
+            path = os.path.join(folder, f"b.{fmt}")
+            result = save_image(rgba, path, SaveOptions(file_format=fmt, verify=False), record=record)
+            assert result["embedded"] and read_record_json(read_xmp(path)), fmt
+            assert "8-bit" in describe_result(result)
+        # metadata off: nothing about the generation leaves in the file
+        path = os.path.join(folder, "c.png")
+        save_image(ramp, path, SaveOptions(file_format="png", embed_metadata=False, verify=False,
+                                           png_chunks={"prompt": "{}"}), record=record)
+        info = Image.open(path).info
+        assert "prompt" not in info and "parameters" not in info and read_xmp(path) is None
+        # colour profile: missing profile file falls back to sRGB and says so
+        result = save_image(ramp, os.path.join(folder, "d.png"),
+                            SaveOptions(file_format="png", color_profile=color.PROFILE_ADOBE, profile_dir=folder, verify=False))
+        assert result["color_profile"] == color.PROFILE_SRGB and any("not found" in w for w in result["warnings"])
+
+
 if __name__ == "__main__":
     failed = 0
     for name, func in sorted(globals().items()):

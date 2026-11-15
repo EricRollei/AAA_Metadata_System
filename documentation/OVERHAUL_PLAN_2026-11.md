@@ -320,3 +320,23 @@ JPEG size limit, handled in steps with a warning each time: drop the JSON copy, 
 Test files for the three apps: `ComfyUI\output\AAA_writer_test\`.
 
 Not yet done in Phase 2: reading files written with the old `ericproject.org` namespaces; ComfyUI workflow embedding for JPEG/WebP (PNG chunks are supported); banded keywords for measurements (waiting on which scores and cut-offs).
+
+---
+
+## Update 2026-11-15 (night): Phase 3a - new save node, flat formats
+
+Node `MetadataAwareSaveImage_v100` ("Metadata Save Image v1.0", category Eric's Nodes/Output), V3 schema.
+Widgets, in order: images, filename_prefix, format (png: bit_depth, compress_level | jpg: quality | webp: quality, lossless | tiff: bit_depth, compression), color_profile, title, keywords, creator, copyright, embed_metadata, then advanced: embed_workflow, embed_a1111, hash_models, include_model_paths, save_sidecar. 14 inputs against about 90 on the old node. Outputs: images, file_path, summary.
+THE WIDGET ORDER IS NOT FROZEN YET: reorder now, before workflows are saved with it.
+
+New modules:
+- `color.py` - real conversion sRGB -> Adobe RGB (1998) / ProPhoto RGB in floating point from the published primaries (Bradford adaptation for ProPhoto), plus the matching ICC profile. Checked against published values: sRGB red = (219,0,0) Adobe RGB, (179,70,26) ProPhoto.
+- `pixels.py` - true 16-bit PNG (own encoder, Up filter) and 16-bit TIFF (tifffile); both carry XMP, ICC and text chunks.
+- `save_core.py` - the node's work without ComfyUI imports (testable offline).
+
+Checked on this machine (`tests_v2/check_save_node.py`, 16 unit tests): PNG 8/16, TIFF 8/16, JPEG, WebP all verify with exiftool; 16-bit files keep every level of a fine gradient; Adobe RGB and ProPhoto files carry the right ICC profile; metadata-off writes no prompt, record or workflow; the V3 schema builds against this ComfyUI's comfy_api.
+
+NOT YET VERIFIED: the node inside a running ComfyUI (loading through the pack's NODE_CLASS_MAPPINGS as a V3 class, the execute path, previews).
+
+Deferred to Phase 3b: layers (Autogrow), layered PSD and TIFF, Display P3 (no profile file in the pack; one must be added or generated), workflow embedding for JPEG/WebP, SVG pass-through, EXR/AVIF.
+Dropped from the design: the rendering-intent widget. A matrix conversion between these RGB spaces has no intent choice to make; the old widget did nothing.

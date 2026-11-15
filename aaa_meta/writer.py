@@ -54,6 +54,7 @@ def save_with_metadata(image: Image.Image, path: str, record: Optional[Generatio
                        user: Optional[UserFields] = None, analysis: Optional[Dict[str, Any]] = None,
                        png_chunks: Optional[Dict[str, str]] = None, include_paths: bool = False,
                        a1111: bool = True, sidecar: bool = False, verify: bool = True,
+                       pixels16: Any = None, icc_profile: Optional[bytes] = None,
                        **save_kwargs) -> Dict[str, Any]:
     """
     Saves `image` to `path` (format from the extension: png, jpg/jpeg, webp, tif/tiff)
@@ -62,6 +63,8 @@ def save_with_metadata(image: Image.Image, path: str, record: Optional[Generatio
     png_chunks     extra PNG text chunks, normally {"prompt": ..., "workflow": ...}
     include_paths  keep local disk paths of model files in the embedded record
     a1111          also write the A1111 parameters string (PNG chunk / EXIF UserComment)
+    pixels16       float array (0..1) to write as true 16-bit (PNG and TIFF only); `image` is then unused
+    icc_profile    ICC profile bytes to embed (pixels must already be in that colour space)
     Returns {"path", "format", "embedded", "packet_bytes", "warnings", "verify"}.
     """
     extension = os.path.splitext(path)[1].lower().lstrip(".")
@@ -74,19 +77,27 @@ def save_with_metadata(image: Image.Image, path: str, record: Optional[Generatio
         return build_packet(fields, record, analysis, include_paths, with_json, omit_prompt_copy)
 
     parameters = build_parameters(record) if (a1111 and record is not None) else ""
-    xmp = packet()
+    has_metadata = fields is not None or record is not None or bool(analysis)
+    xmp = packet() if has_metadata else None        # nothing to say: write no packet at all
+
+    if icc_profile and pixels16 is None:
+        save_kwargs["icc_profile"] = icc_profile
 
     if extension == "png":
         chunks = dict(png_chunks or {})
         if parameters:
             chunks["parameters"] = parameters
-        embed.save_png(image, path, xmp, chunks, **save_kwargs)
+        if pixels16 is not None:
+            from .pixels import save_png16
+            save_png16(pixels16, path, xmp, chunks, icc_profile, save_kwargs.get("compress_level", 6))
+        else:
+            embed.save_png(image, path, xmp, chunks, **save_kwargs)
     elif extension in ("jpg", "jpeg"):
         # JPEG holds about 64 KB of XMP: shrink in steps, never silently.
-        if len(xmp) > embed.JPEG_XMP_LIMIT:
+        if xmp and len(xmp) > embed.JPEG_XMP_LIMIT:
             xmp = packet(with_json=False)
             result["warnings"].append("JPEG size limit: JSON copy of the record left out (structured fields kept)")
-        if len(xmp) > embed.JPEG_XMP_LIMIT:
+        if xmp and len(xmp) > embed.JPEG_XMP_LIMIT:
             xmp = packet(with_json=False, omit_prompt_copy=True)
             result["warnings"].append("JPEG size limit: second copy of the prompt left out (description keeps it)")
         if parameters and "exif" not in save_kwargs:
@@ -104,14 +115,19 @@ def save_with_metadata(image: Image.Image, path: str, record: Optional[Generatio
             save_kwargs["exif"] = _user_comment_exif(parameters)
         embed.save_webp(image, path, xmp, **save_kwargs)
     elif extension in ("tif", "tiff"):
-        embed.save_tiff(image, path, xmp, **save_kwargs)
+        if pixels16 is not None:
+            from .pixels import save_tiff16
+            save_tiff16(pixels16, path, xmp, icc_profile, save_kwargs.get("compression16", "deflate"))
+        else:
+            save_kwargs.pop("compression16", None)
+            embed.save_tiff(image, path, xmp, **save_kwargs)
     else:
         raise ValueError(f"save_with_metadata does not write .{extension}; save the file, then use update_metadata()")
 
-    result["packet_bytes"] = len(xmp)
-    if sidecar:
+    result["packet_bytes"] = len(xmp) if xmp else 0
+    if sidecar and xmp:
         result["sidecar"] = embed.write_sidecar(path, xmp)
-    if verify:
+    if verify and xmp:
         result["verify"] = verify_file(path, fields)
     return result
 
