@@ -11,6 +11,7 @@ License: Dual License (CC BY-NC 4.0 / Commercial) - see LICENSE
 """
 
 import os
+import struct
 from typing import Any, Dict, Optional
 
 from PIL import Image
@@ -26,11 +27,21 @@ _EXIF_IFD = 0x8769
 _USER_COMMENT = 0x9286
 
 
-def _user_comment_exif(text: str) -> Image.Exif:
-    """EXIF UserComment in the encoding A1111-style readers expect (UNICODE + UTF-16BE)."""
-    exif = Image.Exif()
-    exif.get_ifd(_EXIF_IFD)[_USER_COMMENT] = b"UNICODE\x00" + text.encode("utf-16-be")
-    return exif
+def _user_comment_exif(text: str) -> bytes:
+    """
+    A minimal EXIF block holding UserComment in the form A1111-style readers
+    expect: type UNDEFINED, "UNICODE\\0" prefix, UTF-16BE text. Built by hand
+    because Pillow writes this tag with the wrong EXIF type.
+    """
+    comment = b"UNICODE\x00" + text.encode("utf-16-be")
+    exif_ifd_offset = 8 + 2 + 12 + 4                      # header + IFD0 with one entry
+    data_offset = exif_ifd_offset + 2 + 2 * 12 + 4        # Exif IFD with two entries
+    ifd0 = struct.pack("<H", 1) + struct.pack("<HHII", _EXIF_IFD, 4, 1, exif_ifd_offset) + struct.pack("<I", 0)
+    exif_ifd = (struct.pack("<H", 2)
+                + struct.pack("<HHI4s", 0x9000, 7, 4, b"0232")                       # ExifVersion
+                + struct.pack("<HHII", _USER_COMMENT, 7, len(comment), data_offset)
+                + struct.pack("<I", 0))
+    return b"Exif\x00\x00" + b"II*\x00" + struct.pack("<I", 8) + ifd0 + exif_ifd + comment
 
 
 def _creator_tool(record: Optional[GenerationRecord]) -> str:
@@ -79,7 +90,7 @@ def save_with_metadata(image: Image.Image, path: str, record: Optional[Generatio
             result["warnings"].append("JPEG size limit: second copy of the prompt left out (description keeps it)")
         if parameters and "exif" not in save_kwargs:
             exif = _user_comment_exif(parameters)
-            if len(exif.tobytes()) < 60000:
+            if len(exif) < 60000:
                 save_kwargs["exif"] = exif
             else:
                 result["warnings"].append("JPEG size limit: A1111 parameters string left out")
