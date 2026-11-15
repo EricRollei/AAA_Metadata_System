@@ -218,7 +218,7 @@ New package `aaa_meta/` (old `eric_metadata/` untouched):
 
 Tests: `tests_v2/test_core.py` (10 tests, synthetic graphs, pass under embedded Python 3.12). `tests_v2/run_fixtures.py` prints the static trace for the 14 local fixtures (git-ignored, personal prompts).
 
-Static-trace results on the 14 real workflows: samplers, seeds, steps, cfg, multi-pass order, models, LoRAs with strengths and disabled LoRAs excluded are right in all 14. The prompt is found statically in 8; the other 6 pass through an LLM / prompt-builder node and need the runtime hook.
+Static-trace results on the 14 real workflows (checked by eye against the graphs, not by an automated oracle): every workflow yields its sampling passes in order, seeds, models and enabled LoRAs with strengths. Values computed by math/convert nodes stay empty statically (steps in the Ideogram workflow, step ranges in the Wan video workflow). The prompt is found statically in 8; in the other 6 it passes through an LLM or prompt-builder node. Both gaps need the runtime hook.
 
 NOT YET VERIFIED: the hooks in a live ComfyUI run (ComfyUI was running during the build; they load on next restart). Exit test for Phase 1: restart, add "Generation Record (debug) v1" after VAE decode in the Qwen21 workflow, confirm the LLM-written prompt, seed 'SeedGenerator' value, both passes and the model files appear with capture = runtime.
 
