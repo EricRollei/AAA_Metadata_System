@@ -226,3 +226,39 @@ Known limits to revisit:
 - Unknown-role files on side branches (e.g. depth model for a mask) are listed with role "model"; they never become keywords.
 - Async nodes: outputs are picked up when the task finishes.
 - V3 nodes with dotted dynamic inputs (`values.a`) are read as flat names.
+
+---
+
+## Update 2026-11-15: Phase 0 results and Phase 1 live test
+
+### Acceptance results (Eric's tests, all three apps)
+
+| Field | Lightroom | XnView MP | Capture One |
+|---|---|---|---|
+| Files imported | PNG JPG TIFF PSD WebP | PNG JPG TIFF PSD WebP | PNG JPG TIFF PSD (no WebP) |
+| XMP title, keywords, hierarchical keywords, creator, rights, instructions, creator tool | found, all formats | found, all formats | found, all 4 formats |
+| XMP description, headline | found, all formats | found, all formats | PNG and PSD only; on JPG/TIFF the old-style IPTC caption/headline is shown instead |
+| Custom namespace (hcai) | not found | found, all formats | not found |
+| Old-style IPTC caption / keywords / headline | not found | TIFF, JPG | TIFF, JPG |
+| EXIF image description | not found | TIFF only | not found |
+| EXIF user comment | WebP, TIFF, JPG | not found | not found |
+| XP keywords / comment, PNG parameters chunk | not found | not found | not found |
+| Sidecar-only .xmp | not found | found | found |
+
+### Field mapping decided by these results
+
+- Embedded XMP is the carrier. dc:description = prompt, dc:subject + lr:hierarchicalSubject = model / LoRA / sampler / user keywords. This is searchable in all three apps for PNG, JPG, TIFF and PSD.
+- Old-style IPTC (IIM): either not written, or written identical to the XMP. If the two differ, Capture One shows the IIM caption on JPG/TIFF. Default: not written (it also has a 2,000-character caption limit that long prompts exceed). A "legacy IPTC mirror" option can be added later.
+- Sidecar .xmp: off by default. Lightroom ignores it for these formats; the other two read the embedded copy anyway.
+- PNG `parameters` chunk and EXIF user comment: kept for Civitai / AI tools only. No catalog app reads the PNG chunk; Lightroom does search the EXIF user comment on JPG/WebP/TIFF.
+- Custom namespace: the full machine-readable record. Searchable in XnView only; that is fine.
+- WebP: fine for Lightroom and XnView; Capture One will not import it.
+- photoshop:Headline, photoshop:Instructions and xmp:CreatorTool are searchable too (Headline with the same Capture One caveat as description). Open: what to put there.
+
+### Phase 1 live test (Qwen 2.1 subgraph workflow)
+
+Working: hooks installed (log line present), model files with resolved paths and source runtime, one hash from cache, sampler pass, size, subgraph node ids ("459:451"), 38 node runs captured, 0 errors.
+
+Not working: positive prompt empty. The prompt reaches TextEncodeQwenImage21 over a link (TextGenerate -> ComfySwitchNode -> PreviewAny). Replaying the same graph offline with a simulated capture entry for the encoder gives the right prompt, so the builder logic is right and the live capture entry for that node is missing, rejected, or lacks the text. Cause not yet known.
+
+Added to find it: `aaa_meta/diagnostics.py` and a 4th output `capture_dump` on the debug node (per upstream node: whether a capture entry exists and is trusted, what each input held, outputs, files).

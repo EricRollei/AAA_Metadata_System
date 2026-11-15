@@ -8,6 +8,7 @@ Outputs:
     images       the input images, untouched
     record_json  the full generation record as JSON
     summary      a readable summary (also shown on the node)
+    capture_dump per-node view of what the runtime capture holds (for debugging the capture)
 
 Author: Eric Hiss (GitHub: EricRollei)
 License: Dual License (CC BY-NC 4.0 / Commercial) - see LICENSE
@@ -38,15 +39,17 @@ class EricGenerationRecordV1:
             },
         }
 
-    RETURN_TYPES = ("IMAGE", "STRING", "STRING")
-    RETURN_NAMES = ("images", "record_json", "summary")
+    RETURN_TYPES = ("IMAGE", "STRING", "STRING", "STRING")
+    RETURN_NAMES = ("images", "record_json", "summary", "capture_dump")
     FUNCTION = "describe"
     CATEGORY = "Eric's Nodes/Metadata"
     OUTPUT_NODE = True
     DESCRIPTION = "Shows the automatically collected generation record for the images passing through."
 
     def describe(self, images, hash_models="cached", prompt=None, dynprompt=None, unique_id=None):
-        record = record_for_node(unique_id, prompt, dynprompt, hash_models)
+        dump_holder = []
+        record = record_for_node(unique_id, prompt, dynprompt, hash_models, dump_holder)
+        capture_dump = dump_holder[0] if dump_holder else ""
         if record.width is None and hasattr(images, "shape") and len(images.shape) == 4:
             record.height, record.width = int(images.shape[1]), int(images.shape[2])
         stats = shared.state().stats
@@ -55,7 +58,7 @@ class EricGenerationRecordV1:
         if stats["last_error"]:
             summary += f"\nlast capture error: {stats['last_error']}"
         record_json = json.dumps(record.to_dict(), ensure_ascii=False, indent=2)
-        return {"ui": {"text": [summary]}, "result": (images, record_json, summary)}
+        return {"ui": {"text": [summary]}, "result": (images, record_json, summary, capture_dump)}
 
 
 NODE_CLASS_MAPPINGS = {"Eric_Generation_Record_V1": EricGenerationRecordV1}

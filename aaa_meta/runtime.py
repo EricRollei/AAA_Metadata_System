@@ -91,12 +91,13 @@ def _comfyui_version() -> Optional[str]:
 
 
 def record_for_node(unique_id: Any, prompt: Optional[dict] = None, dynprompt: Any = None,
-                    hash_models: str = "cached") -> GenerationRecord:
+                    hash_models: str = "cached", dump_holder: Optional[list] = None) -> GenerationRecord:
     """
     hash_models: "off"     no hashes
                  "cached"  only hashes already known (cache, .sha256, LoRA Manager metadata)
                  "compute" hash files that are not known yet (slow the first time)
     """
+    with_dump = dump_holder is not None
     graph = PromptGraph.from_dynprompt(dynprompt, prompt) if dynprompt is not None else PromptGraph.from_prompt(prompt or {})
     prompt_id = None
     try:
@@ -110,6 +111,12 @@ def record_for_node(unique_id: Any, prompt: Optional[dict] = None, dynprompt: An
     with state.lock:
         captured = {node_id: dict(entry) for node_id, entry in state.nodes.items()}
     record = build_record(graph, str(unique_id), captured, prompt_id, category_lookup)
+    if with_dump:
+        from .diagnostics import capture_dump
+        try:
+            dump_holder.append(capture_dump(graph, str(unique_id), captured, prompt_id))
+        except Exception as exc:  # diagnostics must never break a save
+            dump_holder.append(f"capture dump failed: {exc!r}")
     record.comfyui_version = _comfyui_version()
     if not state.installed.get("exec_hook"):
         record.warnings.append("runtime capture is not active; values come from the graph only")
