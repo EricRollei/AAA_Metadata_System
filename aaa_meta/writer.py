@@ -31,17 +31,18 @@ def _user_comment_exif(text: str) -> bytes:
     """
     A minimal EXIF block holding UserComment in the form A1111-style readers
     expect: type UNDEFINED, "UNICODE\\0" prefix, UTF-16BE text. Built by hand
-    because Pillow writes this tag with the wrong EXIF type.
+    because Pillow writes this tag with the wrong EXIF type. Big-endian, like
+    piexif's output, so the UTF-16BE text matches the block's byte order.
     """
     comment = b"UNICODE\x00" + text.encode("utf-16-be")
     exif_ifd_offset = 8 + 2 + 12 + 4                      # header + IFD0 with one entry
     data_offset = exif_ifd_offset + 2 + 2 * 12 + 4        # Exif IFD with two entries
-    ifd0 = struct.pack("<H", 1) + struct.pack("<HHII", _EXIF_IFD, 4, 1, exif_ifd_offset) + struct.pack("<I", 0)
-    exif_ifd = (struct.pack("<H", 2)
-                + struct.pack("<HHI4s", 0x9000, 7, 4, b"0232")                       # ExifVersion
-                + struct.pack("<HHII", _USER_COMMENT, 7, len(comment), data_offset)
-                + struct.pack("<I", 0))
-    return b"Exif\x00\x00" + b"II*\x00" + struct.pack("<I", 8) + ifd0 + exif_ifd + comment
+    ifd0 = struct.pack(">H", 1) + struct.pack(">HHII", _EXIF_IFD, 4, 1, exif_ifd_offset) + struct.pack(">I", 0)
+    exif_ifd = (struct.pack(">H", 2)
+                + struct.pack(">HHI4s", 0x9000, 7, 4, b"0232")                       # ExifVersion
+                + struct.pack(">HHII", _USER_COMMENT, 7, len(comment), data_offset)
+                + struct.pack(">I", 0))
+    return b"Exif\x00\x00" + b"MM\x00*" + struct.pack(">I", 8) + ifd0 + exif_ifd + comment
 
 
 def _creator_tool(record: Optional[GenerationRecord]) -> str:
