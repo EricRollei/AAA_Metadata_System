@@ -143,3 +143,8 @@ temp/
 
 # v2 local regression fixtures (contain personal prompts)
 tests_v2/fixtures_local/
+
+# caches and local debug output (not part of the package)
+nodes/civitai_cache.json
+nodes/debug/
+

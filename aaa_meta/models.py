@@ -97,6 +97,36 @@ def role_for_key(key: str, class_type: str) -> str:
     return "model"
 
 
+def _role_from_key_only(key: str) -> Optional[str]:
+    low = key.lower()
+    for words, role in ((("lora",), "lora"), (("unet", "diffusion", "transformer"), "unet"),
+                        (("clip_vision",), "clip_vision"), (("vae",), "vae"),
+                        (("text_encoder", "clip", "t5", "llm"), "text_encoder"),
+                        (("ckpt", "checkpoint"), "checkpoint"), (("control",), "controlnet"),
+                        (("upscale",), "upscaler")):
+        if any(word in low for word in words):
+            return role
+    return None
+
+
+def _role_from_path(path: List[str], top_key: str, class_type: str) -> str:
+    """
+    Role of a file name found under `path` (outermost key first). The key closest
+    to the value decides: {"transformer_path": ..., "text_encoder_path": ...} inside
+    a pipeline object means the same wherever that object is plugged in - it must
+    not turn into a LoRA because the node holding it has LoRA in its name.
+    """
+    for key in reversed(path[1:]):
+        role = _role_from_key_only(key)
+        if role is not None:
+            return role
+    if len(path) > 1:
+        # inside a structure with no telling key: the top-level widget name may still say,
+        # the node's class name does not
+        return _role_from_key_only(top_key) or "model"
+    return role_for_key(top_key, class_type)
+
+
 def looks_like_model_file(value: str) -> bool:
     if not isinstance(value, str) or len(value) > 400 or "\n" in value:
         return False
@@ -184,8 +214,7 @@ def _walk(value: Any, top_key: str, path: List[str], context: Optional[dict],
         if looks_like_model_file(text):
             if text.lower() in _NONE_NAMES:
                 return
-            in_lora_context = any("lora" in part.lower() for part in path)
-            role = "lora" if in_lora_context else role_for_key(top_key, class_type)
+            role = _role_from_path(path, top_key, class_type)
             found = FoundModel(name=text, role=role, key=top_key)
             if context is not None:
                 for flag in _ENABLE_FLAGS:

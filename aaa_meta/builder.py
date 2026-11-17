@@ -20,7 +20,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from .graph import Link, PromptGraph
 from .models import base_name, looks_like_model_file, role_for_category, scan_values
-from .record import GenerationRecord, ModelRef, SamplingPass
+from .record import BASE_MODEL_ROLES, GenerationRecord, ModelRef, SamplingPass
 from .resolve import Resolver, as_number
 
 SEED_KEYS = ("seed", "noise_seed")
@@ -39,7 +39,8 @@ _TEXT_EXCLUDE = ("system", "preset", "path", "file", "template", "prefix", "mode
                  "name", "notes", "meta", "format", "key", "find", "replace", "delimiter",
                  "display")
 _NON_PIXEL_LINK_HINTS = ("cond", "positive", "negative", "prompt", "text", "clip", "instruction")
-_ROLE_ORDER = ("checkpoint", "unet", "pipeline", "lora", "text_encoder", "vae", "prompt_llm")
+_ROLE_ORDER = ("checkpoint", "unet", "pipeline", "lora", "text_encoder", "vae", "prompt_llm", "post_model")
+_NOT_MODEL_FILES = (".py", ".json", ".yaml", ".yml", ".cfg", ".txt", ".md")
 _STAGE_KEY = re.compile(r"^s(\d+)_([a-z_]+)$")
 
 CategoryLookup = Callable[[str], Optional[str]]
@@ -427,20 +428,18 @@ class _Builder:
         seen_keys = set()
         self._loader_nodes = set()
 
+        found_refs: List[ModelRef] = []
+
         def add(ref: ModelRef) -> None:
-            key = (ref.role, base_name(ref.name), ref.strength_model)
-            if key in seen_keys:
-                return
-            seen_keys.add(key)
-            refs.append(ref)
+            found_refs.append(ref)
 
         for node_id in ancestors:
             class_type = self.graph.class_type(node_id)
             runtime: List[ModelRef] = []
             for item in self.resolver.files(node_id):
                 role = role_for_category(str(item.get("category", "")))
-                if role is None:
-                    continue
+                if role is None or str(item.get("name", "")).lower().endswith(_NOT_MODEL_FILES):
+                    continue                              # config / script files looked up beside a model
                 runtime.append(ModelRef(role=role, name=str(item.get("name", "")), path=item.get("path"),
                                         node_id=node_id, source="runtime"))
             values: Dict[str, Any] = dict(self.graph.literals(node_id))
@@ -474,6 +473,50 @@ class _Builder:
                     continue
                 add(ref)
 
+        # Nodes that only pass a pipeline object along report its files too. Keep one entry per
+        # (role, file, strength): seen-being-loaded first, then nodes that feed the sampler.
+        generator_nodes = {sampling.node_id for sampling in self.record.passes if sampling.node_id}
+        feeds_generation = set(generator_nodes)
+        for node_id in generator_nodes:
+            feeds_generation.update(self.graph.ancestors(node_id))
+        order = {id(ref): index for index, ref in enumerate(found_refs)}
+        found_refs.sort(key=lambda ref: (0 if ref.source == "runtime" else 1,
+                                         0 if ref.node_id in feeds_generation else 1, order[id(ref)]))
+        for ref in found_refs:
+            key = (ref.role, base_name(ref.name), ref.strength_model)
+            if key not in seen_keys:
+                seen_keys.add(key)
+                refs.append(ref)
+        refs.sort(key=lambda ref: order[id(ref)])
+
+        # The same file reported more than once: what was seen being loaded wins over
+        # what was read from widgets; a specific role wins over the catch-all "model".
+        by_name: Dict[str, List[ModelRef]] = {}
+        for ref in refs:
+            by_name.setdefault(base_name(ref.name), []).append(ref)
+        dropped = set()
+        for group in by_name.values():
+            if len(group) < 2:
+                continue
+            runtime_roles = {ref.role for ref in group if ref.source == "runtime"}
+            specific_roles = {ref.role for ref in group if ref.role != "model"}
+            for ref in group:
+                if ref.source == "runtime":
+                    continue
+                if runtime_roles and ref.role not in runtime_roles:
+                    dropped.add(id(ref))
+                elif ref.role == "model" and specific_roles:
+                    dropped.add(id(ref))
+        refs = [ref for ref in refs if id(ref) not in dropped]
+
+        # Models loaded by nodes that work on the finished picture (depth, segmentation,
+        # detection...) did not generate it: they are kept, but not as the base model.
+        if generator_nodes:
+            for ref in refs:
+                if ref.role in BASE_MODEL_ROLES + ("model",) and ref.node_id is not None \
+                        and ref.node_id not in feeds_generation:
+                    ref.role = "post_model"
+
         # A text encoder that only feeds the prompt text (an LLM that writes the
         # prompt) is not the image model's text encoder.
         image_path = self._image_path_nodes()
@@ -484,8 +527,16 @@ class _Builder:
         def rank(ref: ModelRef) -> int:
             return _ROLE_ORDER.index(ref.role) if ref.role in _ROLE_ORDER else len(_ROLE_ORDER)
 
-        refs.sort(key=rank)
+        # within a role, a model picked on a loader node comes before ones the sampler node
+        # loaded itself (e.g. a checkpoint sweep)
+        refs.sort(key=lambda ref: (rank(ref), 1 if ref.node_id in generator_nodes else 0))
         self.record.models = refs
+        loaded_bases = [ref for ref in refs if ref.role in ("checkpoint", "unet") and ref.source == "runtime"]
+        if len(loaded_bases) > 1:
+            self.record.warnings.append(
+                f"{len(loaded_bases)} base models were loaded in this run (sweep or model switch): "
+                + ", ".join(ref.stem for ref in loaded_bases)
+                + " - the first is listed as the base model")
 
     def _collect_model_chain(self, model_link: Optional[Link]) -> None:
         if model_link is None:

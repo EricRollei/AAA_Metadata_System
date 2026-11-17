@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (2026-11) - Metadata system 2.0
+- **Metadata Save Image v1.0**: every option of v099d, plus generation data collected automatically while
+  the workflow runs and written where Lightroom, XnView MP and Capture One search (caption, keywords,
+  headline, instructions) and in the `hcai` / `eiqa` namespaces. Display P3, real colour conversion,
+  true 16-bit TIFF and PSD, Photoshop-readable layers in TIFF, automatic collection of measurements.
+- Companion nodes on the same core: Metadata Entry V3, Query V4, Filter V3, Enhanced Filter V3, Debugger V3,
+  Consolidator V3, Add Measurements to Image v1, Generation Record (debug) v1.
+- Load nodes v2: stored prompt / record / measurements as outputs, full-precision 16-bit loading,
+  Photoshop layers from TIFF.
+- `tools/backfill_library.py`: makes existing PNGs searchable from their embedded workflow.
+
+### Changed (2026-11)
+- Nodes with a newer version are labelled "(deprecated)" and listed under "Eric's Nodes/Deprecated".
+  They still load and run.
+- `nodes/civitai_cache.json` is no longer tracked; the Multi-LoRA template moved to `resources/templates/`.
+- Licence classifier in `pyproject.toml` corrected (was MIT; the licence is CC BY-NC 4.0 / commercial).
+
 ### Added (2025-10-23) - Wan 2.2 Nodes v2.2 / v1.1
 - **Enhanced Size Options for Both Nodes** - Added 2 new size presets
   - ✨ **NEW TINY**: ~200K pixels for ultra-fast previews and testing

@@ -131,6 +131,13 @@ for file in os.listdir(nodes_dir):
 __version__ = "0.1.0"
 
 # Add web directory for UI components if needed
+# v2: nodes that have a newer version get " (deprecated)" and the Deprecated category (AAA_META_KEEP_OLD_LABELS=1 disables)
+try:
+    from .aaa_meta.deprecation import apply as _mark_deprecated
+    _mark_deprecated(NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS)
+except Exception as _deprecation_error:
+    print(f"[AAA Metadata] deprecation labels not applied: {_deprecation_error!r}")
+
 WEB_DIRECTORY = "./web"
 
 __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS", "WEB_DIRECTORY"]

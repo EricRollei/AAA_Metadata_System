@@ -8,7 +8,8 @@ The old node asks its metadata service to write to targets ("embedded", "xmp",
 "txt", "db"). ServiceBridge stands in for that service:
     embedded -> v2 writer (catalog-searchable fields + hcai / eiqa namespaces)
     xmp      -> v2 sidecar, identical to the embedded packet
-    txt, db  -> the old service, fed with the values the v2 core collected
+    txt      -> text_report (plain, readable)
+    db       -> the old service, fed with the values the v2 core collected
 
 Kept free of ComfyUI imports so it can be tested on its own.
 
@@ -21,7 +22,7 @@ import json
 import os
 from typing import Any, Dict, List, Optional
 
-from . import color, embed, reader, service_mirror
+from . import color, embed, reader, service_mirror, text_report
 from .fields import StandardFields, UserFields, build_standard_fields
 from .record import GenerationRecord, ModelRef, SamplingPass
 from .writer import build_sidecar_packet, patch_metadata, snapshot_standard, update_metadata
@@ -138,7 +139,15 @@ class ServiceBridge:
             except Exception as exc:
                 self.results.append({"path": filepath, "embedded": False, "warnings": [f"sidecar not written: {exc!r}"]})
                 status["xmp"] = False
-        legacy_targets = [t for t in targets if t in ("txt", "db")]
+        if "txt" in targets:
+            # own plain-text report (the old writer printed raw Python structures)
+            try:
+                report_analysis = {k: v for k, v in (analysis or {}).items() if k != "layer_info"} or None
+                text_report.write_report(filepath, self.record, self.user, report_analysis, self.include_paths)
+            except Exception as exc:
+                self.results.append({"path": filepath, "embedded": True, "warnings": [f"txt not written: {exc!r}"]})
+                status["txt"] = False
+        legacy_targets = [t for t in targets if t == "db"]
         if legacy_targets:
             legacy_metadata = copy.deepcopy(metadata)
             if self.record is not None:

@@ -431,3 +431,30 @@ ComfyUI_Metadata.lrplugin_v1_backup_2026-11-16.zip beside it)
   `measurement_fields.json`.
 - Lua tested only outside Lightroom: syntax of all files, and MetadataHelper run under Lua 5.4 with stubbed
   Lightroom imports against real extractor output. Not yet loaded in Lightroom.
+
+## Update 2026-11-17 - live-test fixes, load nodes, cleanup, Phase 6 review
+
+Eric's live test (Krea2 Ultra workflow, PNG): data stored, xmp + txt written. Problems found and fixed:
+- Base model was `depth_pro` (a depth model loaded by a post-processing node). Models loaded by nodes that do
+  not feed the sampler now get role `post_model`: kept in the record, not base model, not a keyword.
+- Pipeline objects passed along (MultiLoRA, UnloadModels...) were scanned with the receiving node's class name,
+  turning the transformer and text encoder into "LoRAs". The key next to the value now decides the role, and one
+  entry per file is kept (seen-being-loaded first, then nodes feeding the sampler).
+- `ModelRef.stem` cut "Wan2.1-VAE-upscale2x" to "Wan2"; config files (.py, .json...) looked up beside a model
+  are no longer listed as models.
+- Checkpoint sweeps: all checkpoints loaded in the run are listed, the loader node's pick first, with a note
+  in the record. Which one produced the saved image is not knowable from outside the sampler node (open).
+- `GenerationRecord.from_dict` failed on stored records (no node ids) - Entry V3 could not extend a record.
+- .txt: own writer `aaa_meta/text_report.py` (sections, one value per line) instead of the old formatter.
+- Lightroom plugin: commands also under File > Plug-in Extras (`LrExportMenuItems`); GitHub URL and buttons removed.
+
+New
+- Load nodes: EricLoadImageExtended_V2, EricLoadImageWithLayers_V2 (subclasses; five metadata outputs appended;
+  full-depth 16-bit PNG / TIFF; Photoshop layers from TIFF incl. raw / RLE / ZIP / ZIP-predicted data).
+- Phase 5 (part): deprecated labels + category for superseded nodes (`aaa_meta/deprecation.py`, applied from
+  `__init__`); civitai_cache.json untracked; template moved to resources/templates; pyproject licence
+  classifier + tifffile dependency; CHANGELOG entry.
+- Phase 5 NOT done (need Eric's decision or a live ComfyUI to test): double package init, moving metadata.db to
+  ComfyUI/user, deleting the old runtime-hook module and unused parsers, version bump / registry publish.
+- Phase 6: `documentation/PHASE6_REMAINING_NODES_REVIEW.md` - survey + options A-G. Nothing changed in those nodes.
+- Checks: unit tests 22; check_node_v100 NODE OK; check_companions COMPANIONS OK (incl. load nodes).

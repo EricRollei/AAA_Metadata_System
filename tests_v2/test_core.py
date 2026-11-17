@@ -536,6 +536,98 @@ def test_layer_stack_psd16_and_tiff_layer_block():
     assert float(np.abs(psd[1].numpy()[..., :3] - layers[1]["pixels"][..., :3]).max()) < 1e-4
 
 
+def test_model_roles_in_pipeline_workflows_and_text_report():
+    from aaa_meta import PromptGraph, build_record
+    from aaa_meta.fields import UserFields, build_standard_fields
+    from aaa_meta.models import scan_values
+    from aaa_meta.record import GenerationRecord, ModelRef
+    from aaa_meta.text_report import build_report
+    assert ModelRef(role="vae", name="spacepxl/Wan2.1-VAE-upscale2x").stem == "Wan2.1-VAE-upscale2x"
+    assert ModelRef(role="unet", name="a\\b\\model_v1.2.safetensors").stem == "model_v1.2"
+    # a pipeline object passed through a node with "LoRA" in its name is not a LoRA
+    pipe = {"transformer_path": "A:/m/unet_x.safetensors", "text_encoder_path": "A:/m/te_x.safetensors"}
+    roles = {f.name.rsplit("/", 1)[-1]: f.role for f in scan_values({"pipeline": pipe}, "EricKrea2MultiLoRA")}
+    assert roles == {"unet_x.safetensors": "unet", "te_x.safetensors": "text_encoder"}, roles
+    graph = PromptGraph.from_prompt({
+        "1": {"class_type": "PipeLoader", "inputs": {"transformer_pick": "unet_x.safetensors"}},
+        "2": {"class_type": "MyMultiLoRA", "inputs": {"pipeline": ["1", 0], "on_1": True, "lora_1": "style.safetensors",
+                                                     "strength_1": 0.7}},
+        "3": {"class_type": "AllInOneSampler", "inputs": {"pipe": ["2", 0], "prompt": "a cat", "seed": 5, "steps": 8,
+                                                         "cfg": 1.0, "sampler": "euler", "scheduler": "simple"}},
+        "4": {"class_type": "Unload", "inputs": {"value": ["3", 0], "pipe": ["2", 0]}},
+        "5": {"class_type": "DepthLoader", "inputs": {"model_name": "depth_pro.pt"}},
+        "6": {"class_type": "DepthBlend", "inputs": {"image": ["4", 0], "depth_model": ["5", 0]}},
+        "9": {"class_type": "Save", "inputs": {"images": ["6", 0]}},
+    })
+
+    def entry(inputs, files=()):
+        return {"class_name": "", "prompt_id": "p", "inputs": inputs, "outputs": {}, "published": {}, "files": list(files)}
+
+    captured = {
+        "1": entry({"transformer_pick": "unet_x.safetensors"}, [{"category": "diffusion_models", "name": "unet_x.safetensors"},
+                                                                 {"category": "text_encoders", "name": "te_x.safetensors"}]),
+        "2": entry({"pipeline": pipe, "on_1": True, "lora_1": "style.safetensors", "strength_1": 0.7}),
+        "3": entry({"pipe": pipe, "prompt": "a cat", "seed": 5, "steps": 8, "cfg": 1.0, "sampler": "euler", "scheduler": "simple"},
+                   [{"category": "diffusion_models", "name": "sweep_other.safetensors"}]),
+        "4": entry({"pipe": pipe}),
+        "5": entry({"model_name": "depth_pro.pt"}, [{"category": "checkpoints", "name": "depth_pro.pt"},
+                                                    {"category": "checkpoints", "name": "depth_pro.cfg.py"}]),
+    }
+    record = build_record(graph, "9", captured, "p")
+    by_role = {}
+    for model in record.models:
+        by_role.setdefault(model.role, []).append(model.stem)
+    assert by_role["unet"] == ["unet_x", "sweep_other"], by_role          # loader's pick first, sampler-loaded after
+    assert by_role["lora"] == ["style"] and by_role["text_encoder"] == ["te_x"], by_role
+    assert by_role["post_model"] == ["depth_pro"] and "model" not in by_role, by_role
+    assert any("2 base models were loaded" in w for w in record.warnings)
+    fields = build_standard_fields(record)
+    assert fields.headline.startswith("unet_x") and "depth_pro" not in fields.keywords
+    # stored records read back even without node ids
+    reread = GenerationRecord.from_dict({"positive": "p", "models": [{"role": "unet", "name": "m.safetensors"}],
+                                         "passes": [{"seed": 3, "sampler": "euler"}], "unknown_field": 1})
+    assert reread.seed == 3 and reread.base_models[0].stem == "m"
+    report = build_report("x.png", record, UserFields(title="T"), {"uni": {"iaa": 71.25}})
+    assert "PROMPT\na cat" in report and "Post-processing model:" in report and "uni.iaa:" in report
+    assert "{'" not in report and "[{" not in report
+
+
+def test_deprecation_labels_and_tiff_layer_reading():
+    from aaa_meta import deprecation, psd_writer
+    from aaa_meta.load_support import select_layers
+
+    class Old:
+        CATEGORY = "Eric's Nodes/Output"
+
+    class New(Old):
+        pass
+
+    classes = {"MetadataAwareSaveImage_v099d": Old, "MetadataAwareSaveImage_v100": New, "Eric_Metadata_Entry_V2": Old}
+    names = {"MetadataAwareSaveImage_v099d": "Save Image with Metadata v099d", "Eric_Metadata_Entry_V2": "Entry V2"}
+    marked = deprecation.apply(classes, names)
+    assert marked == ["MetadataAwareSaveImage_v099d"]                    # Entry V3 not loaded -> V2 left alone
+    assert Old.CATEGORY == deprecation.DEPRECATED_CATEGORY and New.CATEGORY == "Eric's Nodes/Output"
+    assert names["MetadataAwareSaveImage_v099d"].endswith("(deprecated)") and names["Eric_Metadata_Entry_V2"] == "Entry V2"
+    deprecation.apply(classes, names)
+    assert names["MetadataAwareSaveImage_v099d"].count("(deprecated)") == 1
+
+    import numpy as np
+    rng = np.random.default_rng(2)
+    layers = [{"name": "Main Image", "pixels": rng.random((10, 14, 3)).astype(np.float32)},
+              {"name": "Glow", "pixels": rng.random((10, 14, 4)).astype(np.float32), "blend": "screen", "opacity": 128},
+              {"name": "Hidden", "pixels": rng.random((10, 14, 3)).astype(np.float32), "visible": False}]
+    for depth, tolerance in ((8, 0.003), (16, 2e-5)):
+        for byte_order in ("<", ">"):
+            back = psd_writer.parse_tiff_block(psd_writer.photoshop_tiff_block(layers, depth, byte_order), 10, 14)
+            assert [(l["name"], l["blend"], l["opacity"], l["visible"]) for l in back] == [
+                ("Main Image", "normal", 255, True), ("Glow", "screen", 128, True), ("Hidden", "normal", 255, False)]
+            assert float(np.abs(back[1]["pixels"] - layers[1]["pixels"]).max()) < tolerance
+    assert [l["name"] for l in select_layers(back, "visible_only")[0]] == ["Main Image", "Glow"]
+    assert select_layers(back, "layer_by_name", "glow")[0][0]["name"] == "Glow"
+    assert select_layers(back, "layer_by_index", layer_index=9) == ([], "Invalid index")
+    assert psd_writer.parse_tiff_block(b"not a block", 10, 14) == []
+
+
 if __name__ == "__main__":
     failed = 0
     for name, func in sorted(globals().items()):

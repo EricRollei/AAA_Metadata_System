@@ -131,6 +131,79 @@ def main() -> int:
             except Exception:
                 ok = False
                 print(f"round trip {extension}: EXCEPTION\n{traceback.format_exc()[-1500:]}")
+    # ---- load nodes: widgets as before, outputs added at the end, layers and 16-bit read back
+    try:
+        loaders = {}
+        for new_module, new_class, old_module, old_class in (
+                ("eric_load_image_extended_v2", "EricLoadImageExtendedV2", "eric_load_image_extended", "EricLoadImageExtended"),
+                ("eric_load_image_with_layers_v2", "EricLoadImageWithLayersV2", "eric_load_image_with_layers", "EricLoadImageWithLayers")):
+            new = getattr(importlib.import_module(base + new_module), new_class)
+            old = getattr(importlib.import_module(base + old_module), old_class)
+            same = all(list(new.INPUT_TYPES().get(s, {}).keys()) == list(old.INPUT_TYPES().get(s, {}).keys())
+                       for s in ("required", "optional"))
+            kept = tuple(new.RETURN_NAMES[:len(old.RETURN_NAMES)]) == tuple(old.RETURN_NAMES)
+            ok = ok and same and kept
+            loaders[new_class] = new()
+            print(f"{new_class}: widgets identical={same} first outputs kept={kept} added={list(new.RETURN_NAMES[len(old.RETURN_NAMES):])}")
+        with tempfile.TemporaryDirectory() as folder:
+            ramp = torch.linspace(0, 1, 2048).view(1, 1, 2048, 1).repeat(1, 64, 1, 3).contiguous()
+            defaults = {}
+            for section in ("required", "optional"):
+                for name, spec in types[section].items():
+                    options = spec[1] if isinstance(spec, tuple) and len(spec) > 1 and isinstance(spec[1], dict) else {}
+                    if "default" in options:
+                        defaults[name] = options["default"]
+            defaults.pop("filename_prefix", None)
+            results = {}
+            for label, extra in (("png16", {"file_format": "png", "bit_depth": "16-bit"}),
+                                 ("tiff16_layers", {"file_format": "tiff", "bit_depth": "16-bit",
+                                                    "overlay_layer_1": torch.rand(1, 64, 2048, 3), "overlay_1_name": "Glow",
+                                                    "overlay_1_blend_mode": "screen", "overlay_1_opacity": 128}),
+                                 ("tiff8_layers", {"file_format": "tiff",
+                                                   "overlay_layer_1": torch.rand(1, 64, 2048, 3), "overlay_1_name": "Glow"})):
+                values = dict(defaults)
+                values.update(extra)
+                values["custom_output_directory"] = os.path.join(folder, label)
+                results[label] = saver.save_with_metadata(ramp, filename_prefix="comp", prompt=prompt,
+                                                          extra_pnginfo={"workflow": {"nodes": []}}, unique_id="9",
+                                                          **values)["result"][1]
+            # the load nodes read from ComfyUI's input folder: put copies there (removed again below)
+            import shutil
+            import folder_paths
+            input_copies = []
+            for label in list(results):
+                name = f"aaa_check_{label}{os.path.splitext(results[label])[1]}"
+                target = os.path.join(folder_paths.get_input_directory(), name)
+                shutil.copyfile(results[label], target)
+                input_copies.append(target)
+                results[label] = name
+            out = loaders["EricLoadImageExtendedV2"].load_image(results["png16"])
+            levels = int(torch.unique(out[0][0, 0, :, 0]).numel())
+            good = levels > 1500 and out[6].startswith("a zqcomp") and '"positive"' in out[8]
+            ok = ok and good
+            print(f"Extended v2 on 16-bit PNG: ok={good} distinct levels={levels} prompt={out[6][:30]!r}")
+            for label in ("tiff16_layers", "tiff8_layers"):
+                layered = loaders["EricLoadImageWithLayersV2"]
+                everything = layered.load_image(results[label], load_mode="all_layers")
+                glow = layered.load_image(results[label], load_mode="layer_by_name", layer_name="Glow")
+                composite = layered.load_image(results[label], load_mode="composite")
+                good = (everything[0].shape[0] == 2 and tuple(everything[0].shape[1:]) == (64, 2048, 3)
+                        and "Main Image, Glow" in everything[4] and glow[0].shape[0] == 1 and "Selected: Glow" in glow[4]
+                        and composite[5].startswith("a zqcomp") and composite[0].shape[0] >= 1)
+                if label == "tiff16_layers":
+                    good = good and int(torch.unique(everything[0][0, 0, :, 0]).numel()) > 1500
+                ok = ok and good
+                print(f"Layers v2 on {label}: ok={good} batch={tuple(everything[0].shape)} info={everything[4][:90]!r}")
+    except Exception:
+        ok = False
+        print(f"load nodes: EXCEPTION\n{traceback.format_exc()[-1800:]}")
+    finally:
+        for target in locals().get("input_copies", []):
+            try:
+                os.remove(target)
+            except OSError:
+                pass
+
     previews = os.path.join(COMFY, "output", "node_previews")
     if os.path.isdir(previews):
         for name in os.listdir(previews):

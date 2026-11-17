@@ -8,11 +8,12 @@ License: Dual License (CC BY-NC 4.0 / Commercial) - see LICENSE
 """
 
 import os
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from typing import Any, Dict, List, Optional
 
 # Roles that count as "the model" for keywords and summaries.
 BASE_MODEL_ROLES = ("checkpoint", "unet", "pipeline")
+_MODEL_FILE_EXTENSIONS = (".safetensors", ".ckpt", ".pt", ".pth", ".gguf", ".sft", ".bin", ".onnx")
 
 
 @dataclass
@@ -31,7 +32,9 @@ class ModelRef:
     def stem(self) -> str:
         """File name without folders or extension - the keyword form."""
         base = self.name.replace("\\", "/").rstrip("/").split("/")[-1]
-        return os.path.splitext(base)[0] if "." in base else base
+        root, extension = os.path.splitext(base)
+        # only a real model-file extension is cut: "Wan2.1-VAE-upscale2x" is a name, not name + ".1-VAE..."
+        return root if extension.lower() in _MODEL_FILE_EXTENSIONS else base
 
     @property
     def short_hash(self) -> Optional[str]:
@@ -108,10 +111,18 @@ class GenerationRecord:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "GenerationRecord":
-        payload = dict(data)
-        payload["models"] = [ModelRef(**m) for m in payload.get("models", [])]
-        payload["passes"] = [SamplingPass(**p) for p in payload.get("passes", [])]
-        return cls(**payload)
+        # Tolerant: the copy stored in files leaves out empty values and node ids, and
+        # records written by other versions may carry fields this one does not know.
+        def known(kind, values: Dict[str, Any]) -> Dict[str, Any]:
+            names = {f.name for f in fields(kind)}
+            return {key: value for key, value in values.items() if key in names}
+
+        models = [ModelRef(**{"role": "model", "name": "", **known(ModelRef, m)})
+                  for m in data.get("models", []) if isinstance(m, dict)]
+        passes = [SamplingPass(**{"index": index, "node_id": "", "node_class": "", **known(SamplingPass, p)})
+                  for index, p in enumerate(data.get("passes", [])) if isinstance(p, dict)]
+        payload = known(cls, {k: v for k, v in data.items() if k not in ("models", "passes")})
+        return cls(models=models, passes=passes, **payload)
 
     def summary(self) -> str:
         lines: List[str] = [f"capture: {self.capture_mode}"]
