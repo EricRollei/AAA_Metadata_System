@@ -34,6 +34,9 @@ class UserFields:
     keywords: List[str] = field(default_factory=list)
     creator: str = ""
     copyright: str = ""
+    description: str = ""                  # shown before the prompt in the description field
+    project: str = ""
+    custom: Dict[str, Any] = field(default_factory=dict)   # free-form extra fields
 
 
 @dataclass
@@ -113,7 +116,10 @@ def build_standard_fields(record: GenerationRecord, user: Optional[UserFields] =
     user = user or UserFields()
     out = StandardFields()
     out.title = user.title.strip()
-    out.description = record.positive.strip() or record.positive_source.strip()
+    prompt_text = record.positive.strip() or record.positive_source.strip()
+    typed = user.description.strip()
+    # Both stay searchable: what the user wrote first, then the prompt.
+    out.description = f"{typed}\n\n{prompt_text}" if (typed and prompt_text) else (typed or prompt_text)
     out.creator = user.creator.strip()
     out.rights = user.copyright.strip()
     out.creator_tool = creator_tool
@@ -123,11 +129,14 @@ def build_standard_fields(record: GenerationRecord, user: Optional[UserFields] =
     lora_stems = [m.stem for m in record.loras if m.stem]
     samplers = [p.sampler for p in record.passes if p.sampler]
 
-    out.keywords = _unique(base_stems + lora_stems + samplers + list(user.keywords))
+    out.keywords = _unique(base_stems + lora_stems + samplers + list(user.keywords)
+                           + ([user.project.strip()] if user.project.strip() else []))
     hierarchy: List[str] = []
     hierarchy += [f"{KEYWORD_ROOT}|Model|{_safe_leaf(s)}" for s in base_stems]
     hierarchy += [f"{KEYWORD_ROOT}|LoRA|{_safe_leaf(s)}" for s in lora_stems]
     hierarchy += [f"{KEYWORD_ROOT}|Sampler|{_safe_leaf(s)}" for s in samplers]
+    if user.project.strip():
+        hierarchy.append(f"Project|{_safe_leaf(user.project)}")
     out.hierarchical_keywords = _unique(hierarchy)
 
     out.headline = ", ".join(_unique(base_stems))

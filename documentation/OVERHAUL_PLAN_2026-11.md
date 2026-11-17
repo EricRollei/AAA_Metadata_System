@@ -340,3 +340,22 @@ NOT YET VERIFIED: the node inside a running ComfyUI (loading through the pack's 
 
 Deferred to Phase 3b: layers (Autogrow), layered PSD and TIFF, Display P3 (no profile file in the pack; one must be added or generated), workflow embedding for JPEG/WebP, SVG pass-through, EXR/AVIF.
 Dropped from the design: the rendering-intent widget. A matrix conversion between these RGB spaces has no intent choice to make; the old widget did nothing.
+
+## Update 2026-11-16 - Phase 3a redone: full-featured save node
+
+Eric's feedback: the slim v1.0 node dropped features (no save folder) and changed widgets. Not acceptable.
+
+- `MetadataAwareSaveImage_v100` is now a subclass of the v099d node. All 62 v099d widgets, same order;
+  4 new widgets appended at the end (hash_models, embed_a1111, include_model_paths, convert_to_color_profile);
+  third output `summary`.
+- `aaa_meta/legacy_bridge.py` replaces the node's metadata service: embedded + .xmp sidecar go through the
+  v2 writer; .txt / database go through the old service, fed with v2 values.
+- title / project / description / creator / copyright / keywords / custom_metadata widgets now reach the file
+  (typed description is placed above the prompt; project becomes a keyword and `Project|<name>`).
+- Fixes that live only in the v1.0 subclass (v099d untouched): JPEG save never worked in v099d
+  (matte_color passed twice); double layer-detection crash; 16-bit TIFF now true 16-bit; colour profile
+  now converts pixels.
+- `tests_v2/check_node_v100.py`: runs the real node on CPU - widget order identical, png / 16-bit Adobe RGB png /
+  jpg + webp copy / 16-bit ProPhoto tiff / psd / webp all saved to a custom folder and verified. NODE OK.
+- `tools/backfill_library.py`: dry-run-by-default tool that makes existing PNGs searchable from their embedded workflow.
+- NOT yet tested inside a running ComfyUI. Layers (mask/overlay), APNG and SVG paths not exercised by the check.

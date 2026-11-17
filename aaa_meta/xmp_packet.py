@@ -200,7 +200,8 @@ def _serialize(root: ET.Element) -> bytes:
 
 def build_packet(fields: Optional[StandardFields] = None, record: Optional[GenerationRecord] = None,
                  analysis: Optional[Dict[str, Any]] = None, include_paths: bool = False,
-                 include_record_json: bool = True, omit_prompt_copy: bool = False) -> bytes:
+                 include_record_json: bool = True, omit_prompt_copy: bool = False,
+                 project: str = "", custom: Optional[Dict[str, Any]] = None) -> bytes:
     """
     fields    standard catalog fields (from fields.build_standard_fields)
     record    generation record -> hcai namespace
@@ -233,6 +234,10 @@ def build_packet(fields: Optional[StandardFields] = None, record: Optional[Gener
 
     if record is not None:
         _add_generation(desc, record, include_paths, include_record_json, omit_prompt_copy)
+
+    _simple(desc, "hcai", "Project", project)
+    if custom:
+        add_value(desc, "hcai", "Custom", custom)
 
     if analysis:
         for name, value in analysis.items():

@@ -155,6 +155,23 @@ def update_file(path: str, packet: bytes, merge: bool = True) -> Tuple[bool, str
             pass
 
 
+def write_text_tag(path: str, tag: str, text: str) -> Tuple[bool, str]:
+    """Set one text tag (e.g. PNG:Parameters) from a temp file, so newlines and Unicode survive."""
+    temp = tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False, encoding="utf-8", newline="")
+    try:
+        temp.write(text)
+        temp.close()
+        code, out, err = run_exiftool(["-overwrite_original", "-m", "-charset", "exif=utf8",
+                                       f"-{tag}<={temp.name}", path])
+        message = (out.decode("utf-8", errors="replace") + " " + err).strip()
+        return (code == 0 and "1 image files updated" in message), message
+    finally:
+        try:
+            os.unlink(temp.name)
+        except OSError:
+            pass
+
+
 def write_sidecar(image_path: str, packet: bytes) -> str:
     sidecar = os.path.splitext(image_path)[0] + ".xmp"
     with open(sidecar, "wb") as handle:

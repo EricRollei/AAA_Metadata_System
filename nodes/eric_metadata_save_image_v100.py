@@ -1,187 +1,215 @@
 """
 eric_metadata_save_image_v100.py
-Metadata Save Image v1.0 - saves images with automatically collected,
-catalog-searchable metadata.
+Metadata Save Image v1.0
 
-Nothing needs wiring except the image: prompt, models, LoRAs, sampler settings
-and seeds are collected from the running workflow, written to the standard
-fields Lightroom / XnView / Capture One search (description, keywords,
-headline, instructions) and kept in full in the file's own record.
+Every widget, feature and widget ORDER of "Save Image with Metadata v099d" is
+kept exactly (output folder modes, filename formats, layers and blend modes,
+alpha handling, APNG, SVG, PSD, additional format, txt / db / JSON outputs...).
+What changes is underneath:
 
-Successor to MetadataAwareSaveImage_v099d and MetadataAwareSaveImage_Simple,
-which stay installed so existing workflows keep loading.
+  * generation data is collected automatically by the v2 capture core (works
+    with LLM-written prompts, custom samplers, any LoRA loader) - nothing to wire
+  * it is written to the fields Lightroom / XnView / Capture One search
+    (description, keywords, headline, instructions) plus the hcai / eiqa
+    namespaces, and read back to confirm
+  * choosing Adobe RGB or ProPhoto now converts the pixels (the old node only
+    attached the profile)
+  * 16-bit TIFF is written from the full-precision data (was 8-bit x 256)
+
+New widgets are appended AFTER the existing ones so nothing moves.
 
 Author: Eric Hiss (GitHub: EricRollei)
 License: Dual License (CC BY-NC 4.0 / Commercial) - see LICENSE
 """
 
-import json
-import os
-import uuid
+import numpy as np
+import torch
 
-import folder_paths
-from comfy.cli_args import args
-from comfy_api.latest import IO
-
+from .eric_metadata_save_image_v099d import MetadataAwareSaveImage as _SaveImageV099d
 from ..aaa_meta import color
-from ..aaa_meta.fields import UserFields
-from ..aaa_meta.pixels import to_pil
+from ..aaa_meta.legacy_bridge import ServiceBridge, map_color_profile, user_fields_from_widgets
+from ..aaa_meta.pixels import save_tiff16
 from ..aaa_meta.runtime import record_for_node
-from ..aaa_meta.save_core import EXTENSIONS, SaveOptions, describe_result, save_image
 
-PROFILE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "profiles")
-_BROWSER_PREVIEWABLE = ("png", "jpg", "webp")
-
-
-def _fill_tokens(prefix: str, record) -> str:
-    """%model% and %seed% in the filename prefix."""
-    if "%model%" in prefix:
-        base = record.base_models[0].stem if record is not None and record.base_models else "model"
-        prefix = prefix.replace("%model%", "".join(c if c.isalnum() or c in "._-" else "_" for c in base)[:80])
-    if "%seed%" in prefix:
-        seed = record.seed if record is not None else None
-        prefix = prefix.replace("%seed%", str(seed) if seed is not None else "noseed")
-    return prefix
+_LAYER_INPUTS = ("mask_layer_1", "mask_layer_2", "overlay_layer_1", "overlay_layer_2")
+_OVERLAY_INPUTS = ("overlay_layer_1", "overlay_layer_2")
 
 
-class MetadataAwareSaveImageV100(IO.ComfyNode):
+class _JpegFormatParams(dict):
+    """v099d passes matte_color to its JPEG writer twice (once by name, once inside
+    **format_params), which made every JPEG save fail. This dict answers
+    format_params["matte_color"] but leaves it out of the ** expansion."""
+
+    def __init__(self, values):
+        values = dict(values)
+        self._matte_color = values.pop("matte_color", "#FFFFFF")
+        super().__init__(values)
+
+    def __missing__(self, key):
+        if key == "matte_color":
+            return self._matte_color
+        raise KeyError(key)
+
+
+def _convert_tensor(images, profile: str):
+    """sRGB image tensor (B,H,W,C) -> same tensor in `profile` colour space."""
+    array = images.cpu().numpy() if torch.is_tensor(images) else np.asarray(images)
+    converted = color.convert_from_srgb(array[..., :3], profile)
+    if array.shape[-1] == 4:
+        converted = np.concatenate([converted, array[..., 3:]], axis=-1)
+    return torch.from_numpy(np.ascontiguousarray(converted.astype(np.float32)))
+
+
+class MetadataAwareSaveImageV100(_SaveImageV099d):
     @classmethod
-    def define_schema(cls):
-        return IO.Schema(
-            node_id="MetadataAwareSaveImage_v100",
-            display_name="Metadata Save Image v1.0",
-            description=("Saves images with automatically collected generation metadata that Lightroom, XnView "
-                         "and Capture One can search: prompt as description, model / LoRA / sampler as keywords."),
-            category="Eric's Nodes/Output",
-            search_aliases=["save", "save image", "metadata", "xmp", "lightroom"],
-            inputs=[
-                IO.Image.Input("images", tooltip="The images to save."),
-                IO.String.Input("filename_prefix", default="ComfyUI",
-                                tooltip="File name prefix; may include a subfolder. Tokens: %model%, %seed%, "
-                                        "%date:yyyy-MM-dd%, %width%, %height%."),
-                IO.DynamicCombo.Input(
-                    "format",
-                    options=[
-                        IO.DynamicCombo.Option("png", [
-                            IO.Combo.Input("bit_depth", options=["8-bit", "16-bit"], default="8-bit",
-                                           tooltip="16-bit is written from the full-precision image data."),
-                            IO.Int.Input("compress_level", default=4, min=0, max=9, advanced=True,
-                                         tooltip="0 = fastest and largest, 9 = slowest and smallest. Lossless either way."),
-                        ]),
-                        IO.DynamicCombo.Option("jpg", [
-                            IO.Int.Input("quality", default=95, min=1, max=100),
-                        ]),
-                        IO.DynamicCombo.Option("webp", [
-                            IO.Int.Input("quality", default=95, min=1, max=100),
-                            IO.Boolean.Input("lossless", default=False),
-                        ]),
-                        IO.DynamicCombo.Option("tiff", [
-                            IO.Combo.Input("bit_depth", options=["8-bit", "16-bit"], default="16-bit"),
-                            IO.Combo.Input("compression", options=["deflate", "lzw", "none"], default="deflate",
-                                           advanced=True),
-                        ]),
-                    ],
-                    tooltip="File format. Capture One does not import WebP.",
-                ),
-                IO.Combo.Input("color_profile", options=color.PROFILE_CHOICES, default=color.PROFILE_SRGB,
-                               tooltip="Colour space of the saved file. Other than sRGB, the pixels are converted "
-                                       "and the matching ICC profile is embedded."),
-                IO.String.Input("title", default="", tooltip="Optional title."),
-                IO.String.Input("keywords", default="", tooltip="Your own keywords, comma separated. Model, LoRA "
-                                                                "and sampler keywords are added automatically."),
-                IO.String.Input("creator", default="", tooltip="Optional creator / author name."),
-                IO.String.Input("copyright", default="", tooltip="Optional copyright notice."),
-                IO.Boolean.Input("embed_metadata", default=True,
-                                 tooltip="Off: save pixels only (no prompt, record, keywords or workflow)."),
-                IO.Boolean.Input("embed_workflow", default=True, advanced=True,
-                                 tooltip="Embed the ComfyUI workflow so the file can be dragged back into ComfyUI (PNG)."),
-                IO.Boolean.Input("embed_a1111", default=True, advanced=True,
-                                 tooltip="Also write the A1111-style parameters text that Civitai reads."),
-                IO.Combo.Input("hash_models", options=["cached", "compute", "off"], default="cached", advanced=True,
-                               tooltip="cached: use hashes already known. compute: also hash unknown model files "
-                                       "(slow once per large file). off: no hashes."),
-                IO.Boolean.Input("include_model_paths", default=False, advanced=True,
-                                 tooltip="Keep the full disk paths of model files in the embedded record."),
-                IO.Boolean.Input("save_sidecar", default=False, advanced=True,
-                                 tooltip="Also write a .xmp file next to the image (XnView and Capture One read it; "
-                                         "Lightroom does not)."),
-            ],
-            hidden=[IO.Hidden.prompt, IO.Hidden.extra_pnginfo, IO.Hidden.unique_id, IO.Hidden.dynprompt],
-            is_output_node=True,
-            outputs=[
-                IO.Image.Output(display_name="images"),
-                IO.String.Output(display_name="file_path"),
-                IO.String.Output(display_name="summary"),
-            ],
-        )
+    def INPUT_TYPES(cls):
+        types = super().INPUT_TYPES()
+        optional = dict(types.get("optional", {}))          # existing widgets keep their order
+        optional["hash_models"] = (["cached", "compute", "off"], {
+            "default": "cached",
+            "tooltip": "Model hashes for Civitai: cached = use hashes already known; compute = also hash "
+                       "unknown files (slow once per large file); off = none."})
+        optional["embed_a1111"] = ("BOOLEAN", {
+            "default": True,
+            "tooltip": "Also write the A1111-style parameters text that Civitai and AI image browsers read."})
+        optional["include_model_paths"] = ("BOOLEAN", {
+            "default": False,
+            "tooltip": "Keep the full disk paths of model files in the embedded record (off: names and hashes only)."})
+        optional["convert_to_color_profile"] = ("BOOLEAN", {
+            "default": True,
+            "tooltip": "Convert the pixels into the chosen colour profile (Adobe RGB / ProPhoto). Off = attach "
+                       "the profile without converting, as v099d did."})
+        types["optional"] = optional
+        hidden = dict(types.get("hidden", {}))
+        hidden["dynprompt"] = "DYNPROMPT"
+        types["hidden"] = hidden
+        return types
 
-    @classmethod
-    def execute(cls, images, filename_prefix: str, format: dict, color_profile: str, title: str, keywords: str,
-                creator: str, copyright: str, embed_metadata: bool, embed_workflow: bool, embed_a1111: bool,
-                hash_models: str, include_model_paths: bool, save_sidecar: bool) -> IO.NodeOutput:
-        file_format = format["format"]
-        metadata_on = embed_metadata and not args.disable_metadata
-        prompt = cls.hidden.prompt
-        extra_pnginfo = cls.hidden.extra_pnginfo
+    RETURN_TYPES = ("IMAGE", "STRING", "STRING")
+    RETURN_NAMES = ("images", "filepath", "summary")
+    FUNCTION = "save_with_metadata"
+    OUTPUT_NODE = True
+    CATEGORY = _SaveImageV099d.CATEGORY
+    DESCRIPTION = ("Save images with automatically collected generation metadata that Lightroom, XnView and "
+                   "Capture One can search. Same options as v099d.")
 
+    def __init__(self):
+        super().__init__()
+        self.metadata_service = ServiceBridge(self.metadata_service)
+        self._v100_layer_detect_calls = 0
+        self._v100_frame_index = -1
+        self._v100_srgb_frames = None
+        self._v100_main_profile = color.PROFILE_SRGB
+        self._v100_notes = []
+
+    # ------------------------------------------------------------------
+    def save_with_metadata(self, images, filename_prefix="ComfyUI", prompt=None, extra_pnginfo=None,
+                           unique_id=None, dynprompt=None, **kwargs):
+        hash_models = kwargs.pop("hash_models", "cached")
+        embed_a1111 = kwargs.pop("embed_a1111", True)
+        include_model_paths = kwargs.pop("include_model_paths", False)
+        convert_colors = kwargs.pop("convert_to_color_profile", True)
+        self._v100_layer_detect_calls = 0
+        self._v100_frame_index = -1
+        self._v100_notes = []
+        original_images = images
+
+        # 1. collect the generation record (never blocks the save)
         record = None
-        if metadata_on:
-            record = record_for_node(cls.hidden.unique_id, prompt, cls.hidden.dynprompt, hash_models)
-            record.height, record.width = int(images.shape[1]), int(images.shape[2])
+        if kwargs.get("enable_metadata", True) and kwargs.get("auto_extract_generation_params", True):
+            try:
+                record = record_for_node(unique_id, prompt, dynprompt, hash_models)
+                if torch.is_tensor(images) and images.ndim == 4:
+                    record.height, record.width = int(images.shape[1]), int(images.shape[2])
+            except Exception as exc:
+                self._v100_notes.append(f"automatic collection failed: {exc!r}")
+        self.metadata_service.begin(record, user_fields_from_widgets(kwargs), include_model_paths, embed_a1111)
 
-        png_chunks = {}
-        if metadata_on and embed_workflow:
-            if prompt is not None:
-                png_chunks["prompt"] = json.dumps(prompt)
-            for key, value in (extra_pnginfo or {}).items():
-                png_chunks[key] = json.dumps(value)
+        # 2. real colour conversion (the base class then attaches the matching profile)
+        self._v100_main_profile = map_color_profile(kwargs.get("color_profile", ""))
+        self._v100_srgb_frames = None
+        if convert_colors and self._v100_main_profile in (color.PROFILE_ADOBE, color.PROFILE_PROPHOTO):
+            try:
+                self._v100_srgb_frames = images.cpu().numpy() if torch.is_tensor(images) else np.asarray(images)
+                images = _convert_tensor(images, self._v100_main_profile)
+                for name in _OVERLAY_INPUTS:
+                    if kwargs.get(name) is not None:
+                        kwargs[name] = _convert_tensor(kwargs[name], self._v100_main_profile)
+            except Exception as exc:
+                images = original_images
+                self._v100_srgb_frames = None
+                self._v100_notes.append(f"colour conversion failed, saved unconverted: {exc!r}")
 
-        options = SaveOptions(
-            file_format=file_format,
-            bit_depth=16 if format.get("bit_depth") == "16-bit" else 8,
-            quality=int(format.get("quality", 95)),
-            lossless=bool(format.get("lossless", False)),
-            compress_level=int(format.get("compress_level", 4)),
-            tiff_compression=str(format.get("compression", "deflate")),
-            color_profile=color_profile,
-            profile_dir=PROFILE_DIR,
-            embed_metadata=metadata_on,
-            embed_workflow=embed_workflow,
-            embed_a1111=embed_a1111,
-            include_model_paths=include_model_paths,
-            sidecar=save_sidecar,
-            png_chunks=png_chunks,
-        )
-        user = UserFields(title=title, creator=creator, copyright=copyright,
-                          keywords=[k.strip() for k in keywords.split(",") if k.strip()])
+        # 3. everything else exactly as v099d
+        output = super().save_with_metadata(images, filename_prefix=filename_prefix, prompt=prompt,
+                                            extra_pnginfo=extra_pnginfo, unique_id=unique_id, **kwargs)
 
-        prefix = _fill_tokens(filename_prefix, record)
-        full_output_folder, filename, counter, subfolder, _ = folder_paths.get_save_image_path(
-            prefix, folder_paths.get_output_directory(), images[0].shape[1], images[0].shape[0])
-
-        ui_images = []
-        summaries = []
-        first_path = ""
-        for batch_number, image in enumerate(images):
-            name = filename.replace("%batch_num%", str(batch_number))
-            file = f"{name}_{counter:05}.{EXTENSIONS[file_format]}"
-            path = os.path.join(full_output_folder, file)
-            pixels = image.cpu().numpy()
-            result = save_image(pixels, path, options, record=record, user=user)
-            summaries.append(describe_result(result))
-            first_path = first_path or path
-            if file_format in _BROWSER_PREVIEWABLE:
-                ui_images.append({"filename": file, "subfolder": subfolder, "type": "output"})
-            else:
-                preview = f"aaa_preview_{uuid.uuid4().hex[:12]}.png"
-                to_pil(pixels[..., :3]).save(os.path.join(folder_paths.get_temp_directory(), preview), compress_level=1)
-                ui_images.append({"filename": preview, "subfolder": "", "type": "temp"})
-            counter += 1
-
-        summary = "\n".join(summaries)
+        filepath = ""
+        if isinstance(output, dict) and isinstance(output.get("result"), tuple) and len(output["result"]) > 1:
+            filepath = output["result"][1] or ""
+        lines = []
+        if not filepath:
+            lines.append("NOTHING WAS SAVED - turn on debug_logging and check the console for the error.")
+        bridge_summary = self.metadata_service.summary()
+        if bridge_summary:
+            lines.append(bridge_summary)
+        lines.extend(f"note: {note}" for note in self._v100_notes)
         if record is not None:
-            summary += "\n\n" + record.summary()
-        return IO.NodeOutput(images, first_path, summary, ui={"images": ui_images})
+            lines.append("")
+            lines.append(record.summary())
+        summary = "\n".join(lines)
+        ui = output.get("ui", {}) if isinstance(output, dict) else {}
+        return {"ui": ui, "result": (original_images, filepath, summary)}
+
+    # ------------------------------------------------------------------
+    # small corrections to v099d behaviour
+    # ------------------------------------------------------------------
+    def _detect_layers_and_adjust_format(self, current_format, **kwargs):
+        # v099d calls this twice in a row; a format change reported by the second
+        # call ran into an undefined variable and aborted the whole save.
+        result = super()._detect_layers_and_adjust_format(current_format=current_format, **kwargs)
+        self._v100_layer_detect_calls += 1
+        if self._v100_layer_detect_calls >= 2:
+            return result[0], False, ""
+        return result
+
+    def _get_format_parameters(self, **kwargs):
+        params = super()._get_format_parameters(**kwargs)
+        if str(kwargs.get("file_format", "")).lower() in ("jpg", "jpeg"):
+            return _JpegFormatParams(params)
+        return params
+
+    def generate_sequential_filename(self, *args, **kwargs):
+        self._v100_frame_index += 1                      # one call per saved frame
+        return super().generate_sequential_filename(*args, **kwargs)
+
+    def _save_as_tiff(self, image, image_path, metadata=None, prompt=None, extra_pnginfo=None, **kwargs):
+        # True 16-bit for a plain (no extra layers) TIFF. With layers, v099d's writer is used unchanged.
+        has_layers = any(kwargs.get(name) is not None for name in _LAYER_INPUTS)
+        if kwargs.get("bit_depth", "8-bit") == "16-bit" and not has_layers:
+            try:
+                profile_name = kwargs.get("color_profile", "sRGB v4 Appearance")
+                icc = self._get_color_profile(profile_name) if profile_name != "None" else None
+                save_tiff16(np.asarray(image, dtype=np.float32), image_path, None, icc, "deflate")
+                return True
+            except Exception as exc:
+                self._v100_notes.append(f"true 16-bit TIFF failed, used the v099d writer: {exc!r}")
+        return super()._save_as_tiff(image, image_path, metadata=metadata, prompt=prompt,
+                                     extra_pnginfo=extra_pnginfo, **kwargs)
+
+    def _save_additional_format(self, image, primary_path, metadata, prompt=None, extra_pnginfo=None, **kwargs):
+        # The second copy may use a different colour profile than the main file:
+        # start again from the sRGB pixels so it is not converted twice.
+        if self._v100_srgb_frames is not None:
+            additional_profile = map_color_profile(kwargs.get("additional_format_color_profile", ""))
+            if additional_profile != self._v100_main_profile:
+                index = min(max(self._v100_frame_index, 0), len(self._v100_srgb_frames) - 1)
+                image = self._v100_srgb_frames[index]
+                if additional_profile in (color.PROFILE_ADOBE, color.PROFILE_PROPHOTO):
+                    converted = color.convert_from_srgb(image[..., :3], additional_profile)
+                    image = np.concatenate([converted, image[..., 3:]], axis=-1) if image.shape[-1] == 4 else converted
+        return super()._save_additional_format(image, primary_path, metadata, prompt=prompt,
+                                               extra_pnginfo=extra_pnginfo, **kwargs)
 
 
 NODE_CLASS_MAPPINGS = {"MetadataAwareSaveImage_v100": MetadataAwareSaveImageV100}

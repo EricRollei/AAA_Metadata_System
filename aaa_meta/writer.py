@@ -74,7 +74,8 @@ def save_with_metadata(image: Image.Image, path: str, record: Optional[Generatio
     result: Dict[str, Any] = {"path": path, "format": extension, "embedded": True, "warnings": []}
 
     def packet(with_json: bool = True, omit_prompt_copy: bool = False) -> bytes:
-        return build_packet(fields, record, analysis, include_paths, with_json, omit_prompt_copy)
+        return build_packet(fields, record, analysis, include_paths, with_json, omit_prompt_copy,
+                            project=user.project if user else "", custom=user.custom if user else None)
 
     parameters = build_parameters(record) if (a1111 and record is not None) else ""
     has_metadata = fields is not None or record is not None or bool(analysis)
@@ -134,18 +135,55 @@ def save_with_metadata(image: Image.Image, path: str, record: Optional[Generatio
 
 def update_metadata(path: str, record: Optional[GenerationRecord] = None, user: Optional[UserFields] = None,
                     analysis: Optional[Dict[str, Any]] = None, include_paths: bool = False,
-                    verify: bool = True) -> Dict[str, Any]:
-    """Add or replace metadata in an existing file (any format exiftool writes, incl. PSD). Pixels untouched."""
+                    verify: bool = True, a1111: bool = False) -> Dict[str, Any]:
+    """
+    Add or replace metadata in an existing file (any format exiftool writes, incl. PSD).
+    Pixels and everything else already in the file are kept.
+    a1111: also write the A1111 parameters text (PNG text chunk, or EXIF UserComment for JPEG/WebP).
+    """
+    extension = os.path.splitext(path)[1].lower().lstrip(".")
     fields = None
     if record is not None or user is not None:
         fields = build_standard_fields(record or GenerationRecord(), user, _creator_tool(record))
-    xmp = build_packet(fields, record, analysis, include_paths)
+    warnings = []
+
+    def packet(with_json: bool = True, omit_prompt_copy: bool = False) -> bytes:
+        return build_packet(fields, record, analysis, include_paths, with_json, omit_prompt_copy,
+                            project=user.project if user else "", custom=user.custom if user else None)
+
+    xmp = packet()
+    if extension in ("jpg", "jpeg"):
+        if len(xmp) > embed.JPEG_XMP_LIMIT:
+            xmp = packet(with_json=False)
+            warnings.append("JPEG size limit: JSON copy of the record left out (structured fields kept)")
+        if len(xmp) > embed.JPEG_XMP_LIMIT:
+            xmp = packet(with_json=False, omit_prompt_copy=True)
+            warnings.append("JPEG size limit: second copy of the prompt left out (description keeps it)")
     ok, message = embed.update_file(path, xmp, merge=True)
-    result: Dict[str, Any] = {"path": path, "embedded": ok, "packet_bytes": len(xmp),
-                              "warnings": [] if ok else [message]}
+    if not ok:
+        warnings.append(message)
+    if ok and a1111 and record is not None:
+        parameters = build_parameters(record)
+        tag = {"png": "PNG:Parameters", "jpg": "ExifIFD:UserComment", "jpeg": "ExifIFD:UserComment",
+               "webp": "ExifIFD:UserComment"}.get(extension)
+        if tag and not (extension != "png" and len(parameters) > 20000):
+            written, note = embed.write_text_tag(path, tag, parameters)
+            if not written:
+                warnings.append(f"A1111 parameters not written: {note}")
+    result: Dict[str, Any] = {"path": path, "embedded": ok, "packet_bytes": len(xmp), "warnings": warnings}
     if verify and ok and fields is not None:
         result["verify"] = verify_file(path, fields)
     return result
+
+
+def build_sidecar_packet(record: Optional[GenerationRecord] = None, user: Optional[UserFields] = None,
+                         analysis: Optional[Dict[str, Any]] = None, include_paths: bool = False) -> bytes:
+    """The same packet the file gets, for writing as a .xmp sidecar."""
+    fields = None
+    if record is not None or user is not None:
+        fields = build_standard_fields(record or GenerationRecord(), user, _creator_tool(record))
+    return build_packet(fields, record, analysis, include_paths,
+                        project=user.project if user else "", custom=user.custom if user else None)
 
 
 def add_analysis(path: str, analysis: Dict[str, Any]) -> Dict[str, Any]:

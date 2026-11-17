@@ -372,6 +372,26 @@ def test_save_core_true_16bit_and_formats():
         assert result["color_profile"] == color.PROFILE_SRGB and any("not found" in w for w in result["warnings"])
 
 
+def test_user_description_project_and_legacy_overlay():
+    from aaa_meta.fields import build_standard_fields
+    from aaa_meta.legacy_bridge import legacy_generation_overlay, map_color_profile, user_fields_from_widgets
+    from aaa_meta import color
+    from aaa_meta.xmp_packet import build_packet
+    record = _sample_record()
+    user = user_fields_from_widgets({"title": "T", "keywords": "a, b ,", "description": "Series A", "project": "P1",
+                                     "custom_metadata": "{\"client\": \"x\"}"})
+    fields = build_standard_fields(record, user)
+    assert fields.description.startswith("Series A\n\n") and fields.description.endswith(record.positive)
+    assert "P1" in fields.keywords and "Project|P1" in fields.hierarchical_keywords
+    text = build_packet(fields, record, project=user.project, custom=user.custom).decode("utf-8")
+    assert "<hcai:Project>P1</hcai:Project>" in text and "<hcai:client>x</hcai:client>" in text
+    overlay = legacy_generation_overlay(record)
+    assert overlay["seed"] == 447606998181262 and overlay["sampler"] == "lcm" and overlay["loras"][0]["name"] == "ink"
+    assert map_color_profile("Adobe RGB") == color.PROFILE_ADOBE and map_color_profile("ProPhoto RGB") == color.PROFILE_PROPHOTO
+    assert map_color_profile("sRGB v4 Appearance") == color.PROFILE_SRGB and map_color_profile("None") == color.PROFILE_NONE
+    assert user_fields_from_widgets({"custom_metadata": "not json"}).custom == {"text": "not json"}
+
+
 if __name__ == "__main__":
     failed = 0
     for name, func in sorted(globals().items()):
