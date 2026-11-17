@@ -494,6 +494,48 @@ def test_measurement_collection_and_mirror():
     assert calls == ["old", "mirror", "old"], calls
 
 
+def test_layer_stack_psd16_and_tiff_layer_block():
+    import struct
+    import tempfile
+    import numpy as np
+    from aaa_meta import psd_writer
+    from aaa_meta.layers import build_layers, layer_summary
+    rng = np.random.default_rng(1)
+    main = rng.random((24, 32, 3)).astype(np.float32)
+    widgets = {"overlay_layer_1": rng.random((1, 24, 32, 3)).astype(np.float32), "overlay_1_name": "Glow",
+               "overlay_1_blend_mode": "screen", "overlay_1_opacity": 128,
+               "mask_layer_1": rng.random((1, 12, 16, 3)).astype(np.float32), "mask_1_name": "Subject",   # other size
+               "include_mask_layers": True}
+    layers = build_layers(main, widgets)
+    assert [l["name"] for l in layers] == ["Main Image", "Glow", "Subject (Masked Image)", "Subject"]
+    assert layers[2]["visible"] is False and layers[1]["blend"] == "screen" and layers[1]["opacity"] == 128
+    assert all(l["pixels"].shape == (24, 32, 4) for l in layers)
+    assert layer_summary(layers)["layer_count"] == 4
+    # TIFF block, both byte orders: header, block key, layer count
+    for byte_order, signature, key in (("<", b"MIB8", b"ryaL"), (">", b"8BIM", b"Layr")):
+        block = psd_writer.photoshop_tiff_block(layers, 8, byte_order)
+        assert block.startswith(psd_writer.TIFF_BLOCK_HEADER)
+        offset = len(psd_writer.TIFF_BLOCK_HEADER)
+        assert block[offset:offset + 8] == signature + key
+        length = struct.unpack(byte_order + "I", block[offset + 8:offset + 12])[0]
+        assert struct.unpack(byte_order + "h", block[offset + 12:offset + 14])[0] == 4 and length % 4 == 0
+        assert block[offset + 12 + length:offset + 12 + length + 4] == signature        # LMsk block follows
+    assert psd_writer.photoshop_tiff_block(layers, 16, "<")[36:44] == b"MIB861rL"
+    # 16-bit PSD read back by psd-tools (when installed)
+    try:
+        from psd_tools import PSDImage
+    except Exception:
+        return
+    path = os.path.join(tempfile.mkdtemp(), "t16.psd")
+    psd_writer.write_psd(path, main, layers, depth=16, icc_profile=b"icc")
+    psd = PSDImage.open(path)
+    assert psd.depth == 16 and psd.size == (32, 24)
+    assert [(l.name, l.blend_mode.name, l.opacity, l.visible) for l in psd] == [
+        ("Main Image", "NORMAL", 255, True), ("Glow", "SCREEN", 128, True),
+        ("Subject (Masked Image)", "NORMAL", 255, False), ("Subject", "NORMAL", 255, True)]
+    assert float(np.abs(psd[1].numpy()[..., :3] - layers[1]["pixels"][..., :3]).max()) < 1e-4
+
+
 if __name__ == "__main__":
     failed = 0
     for name, func in sorted(globals().items()):

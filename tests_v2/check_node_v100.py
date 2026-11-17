@@ -68,6 +68,9 @@ def main() -> int:
         {"file_format": "psd", "_layers": True},
         {"file_format": "tiff", "_layers": True},
         {"file_format": "png", "_layers": True},
+        {"file_format": "psd", "bit_depth": "16-bit", "_layers": True},
+        {"file_format": "psd", "bit_depth": "16-bit", "color_profile": "ProPhoto RGB"},
+        {"file_format": "tiff", "bit_depth": "16-bit", "_layers": True},
         {"file_format": "jpg", "color_profile": "Display P3"},
     ]
     with tempfile.TemporaryDirectory() as folder:
@@ -85,10 +88,15 @@ def main() -> int:
                         defaults[name] = spec[0][0]
             defaults.update({k: v for k, v in case.items() if not k.startswith("_")})
             if case.get("_layers"):
-                defaults.update({"overlay_layer_1": torch.rand(1, 128, 256, 3), "overlay_1_name": "Glow",
+                yy, xx = torch.meshgrid(torch.linspace(0, 1, 128), torch.linspace(0, 1, 256), indexing="ij")
+                glow = torch.exp(-(((xx - 0.7) / 0.18) ** 2 + ((yy - 0.4) / 0.3) ** 2))     # soft disc, right of centre
+                glow_rgb = torch.stack([glow, glow * 0.8, glow * 0.3], dim=-1)[None]
+                left_half = (xx < 0.5).float()[None, ..., None].repeat(1, 1, 1, 3)
+                top_half = (yy < 0.5).float()[None, ..., None]
+                defaults.update({"overlay_layer_1": glow_rgb, "overlay_1_name": "Glow",
                                  "overlay_1_blend_mode": "screen", "overlay_1_opacity": 128,
-                                 "mask_layer_1": torch.rand(1, 128, 256, 3), "mask_1_name": "Subject",
-                                 "mask_layer_2": torch.rand(1, 128, 256, 1), "mask_2_name": "Sky",
+                                 "mask_layer_1": left_half, "mask_1_name": "Subject",
+                                 "mask_layer_2": top_half, "mask_2_name": "Sky",
                                  "include_mask_layers": True})
             defaults.update({"custom_output_directory": target, "title": "Node check", "keywords": "zqkw, check",
                              "project": "zqproject", "description": "typed description", "save_xmp": True,
@@ -120,6 +128,36 @@ def main() -> int:
                 print("   psd layers:", layers)
                 good = good and any(name == "Glow" and "SCREEN" in mode.upper() for name, mode, _ in layers)
                 ok = ok and good
+            if filepath.lower().endswith(".psd") and case.get("bit_depth") == "16-bit":
+                from psd_tools import PSDImage
+                psd = PSDImage.open(filepath)
+                print("   psd depth:", psd.depth, "layers:", [layer.name for layer in psd])
+                good = good and psd.depth == 16 and psd[0].name == "Main Image"
+                ok = ok and good
+            if case.get("_layers") and filepath.lower().endswith((".tif", ".tiff")):
+                import tifffile
+                with tifffile.TiffFile(filepath) as tif:
+                    tag = tif.pages[0].tags.get(37724)
+                    value = bytes(tag.value) if tag is not None else b""
+                    pages = len(tif.pages)
+                    bits = int(tif.pages[0].bitspersample)
+                expected_key = b"MIB861rL" if bits == 16 else b"MIB8ryaL"
+                if tif.byteorder == ">":
+                    expected_key = b"8BIMLr16" if bits == 16 else b"8BIMLayr"
+                good = good and value[36:44] == expected_key and bits == (16 if case.get("bit_depth") == "16-bit" else 8)
+                has_block = value.startswith(b"Adobe Photoshop Document Data Block")
+                print(f"   tiff: pages={pages} photoshop layer block={has_block} ({len(value)} bytes) "
+                      f"key={value[36:44]!r} bits={bits}")
+                good = good and has_block
+                ok = ok and good
+            keep = os.environ.get("AAA_KEEP_SAMPLES", "").strip()
+            if keep and filepath and (case.get("_layers") or case.get("bit_depth") == "16-bit") \
+                    and filepath.lower().endswith((".psd", ".tif", ".tiff")):
+                import shutil
+                os.makedirs(keep, exist_ok=True)
+                label = f"{'16bit' if case.get('bit_depth') == '16-bit' else '8bit'}" \
+                        f"{'_layers' if case.get('_layers') else ''}{os.path.splitext(filepath)[1]}"
+                shutil.copyfile(filepath, os.path.join(keep, "sample_" + label))
             print(f"case {case}: ok={good} saved_as={os.path.basename(filepath)}\n   files={sorted(written)}\n   icc={tags.get('ICC_Profile:ProfileDescription')} "
                   f"bits={tags.get('PNG:BitDepth') or tags.get('IFD0:BitsPerSample')} headline={tags.get('XMP-photoshop:Headline')}")
             if not good:

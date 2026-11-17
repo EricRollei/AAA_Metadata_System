@@ -29,7 +29,8 @@ import torch
 from PIL import Image
 
 from .eric_metadata_save_image_v099d import MetadataAwareSaveImage as _SaveImageV099d
-from ..aaa_meta import color
+from ..aaa_meta import color, embed, psd_writer
+from ..aaa_meta.layers import build_layers, layer_summary, to_float_array
 from ..aaa_meta.legacy_bridge import ServiceBridge, map_color_profile, user_fields_from_widgets
 from ..aaa_meta.pixels import save_tiff16
 from ..aaa_meta.runtime import measurements_for_node, record_for_node
@@ -232,19 +233,66 @@ class MetadataAwareSaveImageV100(_SaveImageV099d):
         self._v100_frame_index += 1                      # one call per saved frame
         return super().generate_sequential_filename(*args, **kwargs)
 
+    def _save_as_psd(self, image, image_path, metadata=None, prompt=None, extra_pnginfo=None, **kwargs):
+        # v099d writes 8-bit PSDs only. 16-bit: same layer stack, written from the full-precision data.
+        if kwargs.get("bit_depth", "8-bit") != "16-bit":
+            return super()._save_as_psd(image, image_path, metadata=metadata, prompt=prompt,
+                                        extra_pnginfo=extra_pnginfo, **kwargs)
+        try:
+            layers = build_layers(image, kwargs)
+            profile_name = kwargs.get("color_profile", "None")
+            icc = self._get_color_profile(profile_name) if profile_name != "None" else None
+            psd_writer.write_psd(image_path, to_float_array(image), layers, depth=16, icc_profile=icc)
+            if isinstance(metadata, dict):
+                metadata.setdefault("analysis", {})["layer_info"] = layer_summary(layers)
+                metadata.setdefault("technical", {})["bit_depth"] = "16-bit"
+            print(f"[PSD] Saved PSD (16-bit) with {len(layers)} layers to: {image_path}")
+            return True
+        except Exception as exc:
+            self._v100_notes.append(f"16-bit PSD failed ({exc!r}); saved 8-bit with the v099d writer")
+            return super()._save_as_psd(image, image_path, metadata=metadata, prompt=prompt,
+                                        extra_pnginfo=extra_pnginfo, **kwargs)
+
+    def _add_photoshop_layers_to_tiff(self, image, image_path, widgets):
+        """Adds the layer stack in the form Photoshop reads from TIFF files (tag 37724).
+        The pages v099d wrote stay as they are, so other programs see what they saw before."""
+        with open(image_path, "rb") as handle:
+            byte_order = "<" if handle.read(2) == b"II" else ">"
+        import tifffile
+        with tifffile.TiffFile(image_path) as tif:                 # the layers must match the file's real depth
+            depth = 16 if int(tif.pages[0].bitspersample) == 16 else 8
+        layers = build_layers(image, widgets)
+        block = psd_writer.photoshop_tiff_block(layers, depth, byte_order)
+        ok, message = embed.write_binary_tag(image_path, "IFD0:ImageSourceData", block)
+        if not ok:
+            self._v100_notes.append(f"Photoshop layers not added to the TIFF: {message}")
+        return ok
+
     def _save_as_tiff(self, image, image_path, metadata=None, prompt=None, extra_pnginfo=None, **kwargs):
         # True 16-bit for a plain (no extra layers) TIFF. With layers, v099d's writer is used unchanged.
         has_layers = any(kwargs.get(name) is not None for name in _LAYER_INPUTS)
-        if kwargs.get("bit_depth", "8-bit") == "16-bit" and not has_layers:
+        if kwargs.get("bit_depth", "8-bit") == "16-bit":
+            # True 16-bit from the full-precision data. With layers: the picture plus the layer stack
+            # Photoshop reads (v099d's 16-bit conversion of layered TIFFs fails and falls back to 8-bit).
             try:
                 profile_name = kwargs.get("color_profile", "sRGB v4 Appearance")
                 icc = self._get_color_profile(profile_name) if profile_name != "None" else None
-                save_tiff16(np.asarray(image, dtype=np.float32), image_path, None, icc, "deflate")
+                save_tiff16(to_float_array(image), image_path, None, icc, "deflate")
+                if has_layers:
+                    self._add_photoshop_layers_to_tiff(image, image_path, kwargs)
+                    if isinstance(metadata, dict):
+                        metadata.setdefault("analysis", {})["layer_info"] = layer_summary(build_layers(image, kwargs))
                 return True
             except Exception as exc:
                 self._v100_notes.append(f"true 16-bit TIFF failed, used the v099d writer: {exc!r}")
-        return super()._save_as_tiff(image, image_path, metadata=metadata, prompt=prompt,
-                                     extra_pnginfo=extra_pnginfo, **kwargs)
+        saved = super()._save_as_tiff(image, image_path, metadata=metadata, prompt=prompt,
+                                      extra_pnginfo=extra_pnginfo, **kwargs)
+        if saved and has_layers and os.path.isfile(image_path):
+            try:
+                self._add_photoshop_layers_to_tiff(image, image_path, kwargs)
+            except Exception as exc:
+                self._v100_notes.append(f"Photoshop layers not added to the TIFF: {exc!r}")
+        return saved
 
     def _save_as_apng(self, images, image_path, metadata=None, prompt=None, extra_pnginfo=None, **kwargs):
         # v099d needs the optional "apng" package; without it nothing was saved.

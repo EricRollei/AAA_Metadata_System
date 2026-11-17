@@ -174,6 +174,23 @@ def write_text_tag(path: str, tag: str, text: str) -> Tuple[bool, str]:
             pass
 
 
+def write_binary_tag(path: str, tag: str, data: bytes) -> Tuple[bool, str]:
+    """Set one binary tag from bytes (exiftool "-TAG<=file"). Everything else in the file is kept."""
+    temp = tempfile.NamedTemporaryFile(suffix=".bin", delete=False)
+    try:
+        temp.write(data)
+        temp.close()
+        code, out, err = run_exiftool(["-overwrite_original", "-m", f"-{tag}<={temp.name}", path])
+        text = (out.decode("utf-8", "replace") if isinstance(out, bytes) else str(out)) + " " + str(err)
+        ok = code == 0 and "1 image files updated" in text
+        return ok, "" if ok else text.strip()[:300]
+    finally:
+        try:
+            os.unlink(temp.name)
+        except OSError:
+            pass
+
+
 def sidecar_path(image_path: str) -> str:
     return os.path.splitext(image_path)[0] + ".xmp"
 

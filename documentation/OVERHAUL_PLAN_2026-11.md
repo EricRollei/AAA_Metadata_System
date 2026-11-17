@@ -405,3 +405,29 @@ Eric: workflow in JPG can be ignored; measurements should be auto-collected wher
 - Checks: unit tests 19 pass; check_node_v100 NODE OK (14 cases); check_companions COMPANIONS OK incl. the
   old-service mirror. The in-graph collection is unit-tested with simulated captures only - not yet run with
   real analysis nodes in ComfyUI.
+
+## Update 2026-11-16 (late) - 16-bit PSD, Photoshop layers in TIFF, Lightroom plugin 2.0
+
+Save node v1.0
+- `aaa_meta/psd_writer.py`: own writer for Photoshop layer data (names incl. Unicode, blend modes, opacity,
+  hidden flag; uncompressed channel data). `aaa_meta/layers.py`: the node's layer stack as float arrays,
+  same order / names as the v099d PSD writer.
+- PSD + bit_depth 16-bit -> true 16-bit layered PSD (v099d: 8-bit only). 8-bit PSD still goes through psd-tools.
+- TIFF + layer inputs -> the v099d file as before, plus TIFF tag 37724 (ImageSourceData) holding the layer
+  stack in the form Photoshop reads. Added with exiftool, nothing else in the file changes.
+- TIFF + 16-bit + layers -> true 16-bit picture + 16-bit layer block, single page (v099d's 16-bit conversion
+  of layered TIFFs errors out and leaves 8-bit pages).
+- Verified here: psd-tools reads the 16-bit PSDs (depth, names, blend, opacity, pixels); the TIFF block parses
+  with psdtags in both byte orders (pixel data is big-endian in either). NOT verified: Photoshop itself.
+  Samples for that: ComfyUI\output\aaa_layer_samples\.
+- check_node_v100: 17 cases, NODE OK. Unit tests: 20.
+
+Lightroom plugin 2.0 (M:\Lighroom_Extension\ComfyUI_Metadata.lrplugin; v1 kept as
+ComfyUI_Metadata.lrplugin_v1_backup_2026-11-16.zip beside it)
+- `aaa_v2_reader.py` (stdlib only): reads hcai record + eiqa measurements from PNG / JPEG / TIFF / WebP / PSD /
+  sidecar; the extractor tries it first and falls back to the embedded-workflow parser for older PNGs.
+- New catalog fields (schemaVersion 3): typed prompt, rewriter, passes, project, ComfyUI version, has-measurements,
+  measurements text, 8 score fields + 5 band fields. Mapping of measurement names to score fields in
+  `measurement_fields.json`.
+- Lua tested only outside Lightroom: syntax of all files, and MetadataHelper run under Lua 5.4 with stubbed
+  Lightroom imports against real extractor output. Not yet loaded in Lightroom.
