@@ -122,3 +122,37 @@ def record_for_node(unique_id: Any, prompt: Optional[dict] = None, dynprompt: An
         record.warnings.append("runtime capture is not active; values come from the graph only")
     _resolve_paths_and_hashes(record, hash_models)
     return record
+
+
+def _class_info(class_type: str) -> Optional[Dict[str, Any]]:
+    try:
+        import sys
+        import nodes
+        cls = nodes.NODE_CLASS_MAPPINGS.get(class_type)
+        if cls is None:
+            return None
+        module = sys.modules.get(getattr(cls, "__module__", ""))
+        return {"module": getattr(cls, "__module__", ""), "file": getattr(module, "__file__", "") or "",
+                "return_names": tuple(getattr(cls, "RETURN_NAMES", ()) or ()),
+                "return_types": tuple(getattr(cls, "RETURN_TYPES", ()) or ())}
+    except Exception:
+        return None
+
+
+def measurements_for_node(unique_id: Any, prompt: Optional[dict] = None, dynprompt: Any = None):
+    """Measured data produced in this run for the image the given save node receives.
+    Returns (measurements, notes). See measurements.collect_measurements."""
+    from .measurements import collect_measurements
+    graph = PromptGraph.from_dynprompt(dynprompt, prompt) if dynprompt is not None else PromptGraph.from_prompt(prompt or {})
+    prompt_id = None
+    try:
+        from comfy_execution.utils import get_executing_context
+        context = get_executing_context()
+        if context is not None:
+            prompt_id = context.prompt_id
+    except Exception:
+        pass
+    state = shared.state()
+    with state.lock:
+        captured = {node_id: dict(entry) for node_id, entry in state.nodes.items()}
+    return collect_measurements(graph, str(unique_id), captured, prompt_id, _class_info)

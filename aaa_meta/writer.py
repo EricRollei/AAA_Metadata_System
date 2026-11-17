@@ -191,29 +191,67 @@ def build_sidecar_packet(record: Optional[GenerationRecord] = None, user: Option
                         project=user.project if user else "", custom=user.custom if user else None)
 
 
+_TEXT_FIELDS = ("title", "description", "creator", "rights", "headline", "instructions", "creator_tool",
+                "digital_source_type")
+
+
+def snapshot_standard(path: str) -> Dict[str, Optional[StandardFields]]:
+    """
+    The text fields a file and its sidecar hold right now, so they can be put back
+    after the old writer has touched the file (it garbles an existing
+    description when it rewrites it).
+    """
+    from . import reader
+
+    def fields_of(packet: Optional[bytes]) -> Optional[StandardFields]:
+        standard = reader.parse_packet(packet)["standard"] if packet else {}
+        values = {name: str(standard[name]) for name in _TEXT_FIELDS if standard.get(name)}
+        return StandardFields(**{"digital_source_type": "", **values}) if values else None
+
+    return {"embedded": fields_of(embed.read_xmp(path)), "sidecar": fields_of(embed.read_sidecar(path))}
+
+
+def _with_restored(fields: Optional[StandardFields], saved: Optional[StandardFields]) -> Optional[StandardFields]:
+    if saved is None:
+        return fields
+    if fields is None:
+        return saved
+    merged = StandardFields(**{**vars(fields)})
+    for name in _TEXT_FIELDS:
+        if not getattr(merged, name):
+            setattr(merged, name, getattr(saved, name))
+    return merged
+
+
 def patch_metadata(path: str, fields: Optional[StandardFields] = None, record: Optional[GenerationRecord] = None,
                    analysis: Optional[Dict[str, Any]] = None, rating: Optional[int] = None, project: str = "",
                    custom: Optional[Dict[str, Any]] = None, embedded: bool = True, sidecar: bool = False,
-                   strip_iim: bool = False) -> Dict[str, Any]:
+                   strip_iim: bool = False,
+                   restore: Optional[Dict[str, Optional[StandardFields]]] = None) -> Dict[str, Any]:
     """
     Change only the given values in an existing file and / or its .xmp sidecar.
     Empty values are left alone (nothing is erased); keywords are added to the
     ones already there; measured data is added to what is already stored.
+    restore: result of snapshot_standard() taken before another writer touched the
+             file; those text fields are written back unless `fields` sets them.
     Returns {"embedded": bool|None, "sidecar": bool|None, "warnings": [...]}.
     """
     result: Dict[str, Any] = {"path": path, "embedded": None, "sidecar": None, "warnings": []}
 
-    def packet_for(existing: Optional[bytes]) -> bytes:
+    restore = restore or {}
+
+    def packet_for(existing: Optional[bytes], target: str = "embedded") -> bytes:
         merged = {**read_analysis_json(existing), **analysis} if analysis else None
-        return build_packet(fields, record, merged, project=project, custom=custom, rating=rating)
+        return build_packet(_with_restored(fields, restore.get(target)), record, merged, project=project,
+                            custom=custom, rating=rating)
 
     extension = os.path.splitext(path)[1].lower().lstrip(".")
     if embedded:
         xmp = packet_for(embed.read_xmp(path))
         if extension in ("jpg", "jpeg") and len(xmp) > embed.JPEG_XMP_LIMIT and record is not None:
             merged = {**read_analysis_json(embed.read_xmp(path)), **analysis} if analysis else None
-            xmp = build_packet(fields, record, merged, include_record_json=False, project=project,
-                               custom=custom, rating=rating)
+            xmp = build_packet(_with_restored(fields, restore.get("embedded")), record, merged,
+                               include_record_json=False, project=project, custom=custom, rating=rating)
             result["warnings"].append("JPEG size limit: JSON copy of the record left out")
         ok, message = embed.update_file(path, xmp, merge=True, extra_args=["-iptc:all="] if strip_iim else None)
         result["embedded"] = ok
@@ -221,7 +259,7 @@ def patch_metadata(path: str, fields: Optional[StandardFields] = None, record: O
             result["warnings"].append(message)
     if sidecar:
         try:
-            embed.write_sidecar(path, packet_for(embed.read_sidecar(path)), merge=True)
+            embed.write_sidecar(path, packet_for(embed.read_sidecar(path), "sidecar"), merge=True)
             result["sidecar"] = True
         except Exception as exc:
             result["sidecar"] = False

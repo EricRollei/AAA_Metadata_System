@@ -32,7 +32,7 @@ from .eric_metadata_save_image_v099d import MetadataAwareSaveImage as _SaveImage
 from ..aaa_meta import color
 from ..aaa_meta.legacy_bridge import ServiceBridge, map_color_profile, user_fields_from_widgets
 from ..aaa_meta.pixels import save_tiff16
-from ..aaa_meta.runtime import record_for_node
+from ..aaa_meta.runtime import measurements_for_node, record_for_node
 
 _DISPLAY_P3 = "Display P3"
 _LAYER_INPUTS = ("mask_layer_1", "mask_layer_2", "overlay_layer_1", "overlay_layer_2")
@@ -88,6 +88,11 @@ class MetadataAwareSaveImageV100(_SaveImageV099d):
             "default": True,
             "tooltip": "Convert the pixels into the chosen colour profile (Adobe RGB / ProPhoto). Off = attach "
                        "the profile without converting, as v099d did."})
+        optional["collect_measurements"] = ("BOOLEAN", {
+            "default": True,
+            "tooltip": "Store results of analysis nodes (Eric-image-classification: UniPercept, blur, IQA...) that "
+                       "worked on this image in this run. No wiring needed; the image just has to pass through "
+                       "them, or they read it from a node that feeds this save."})
         types["optional"] = optional
         hidden = dict(types.get("hidden", {}))
         hidden["dynprompt"] = "DYNPROMPT"
@@ -118,6 +123,7 @@ class MetadataAwareSaveImageV100(_SaveImageV099d):
         embed_a1111 = kwargs.pop("embed_a1111", True)
         include_model_paths = kwargs.pop("include_model_paths", False)
         convert_colors = kwargs.pop("convert_to_color_profile", True)
+        collect_measurements = kwargs.pop("collect_measurements", True)
         self._v100_layer_detect_calls = 0
         self._v100_frame_index = -1
         self._v100_notes = []
@@ -132,7 +138,15 @@ class MetadataAwareSaveImageV100(_SaveImageV099d):
                     record.height, record.width = int(images.shape[1]), int(images.shape[2])
             except Exception as exc:
                 self._v100_notes.append(f"automatic collection failed: {exc!r}")
-        self.metadata_service.begin(record, user_fields_from_widgets(kwargs), include_model_paths, embed_a1111)
+        measurements = {}
+        if collect_measurements and kwargs.get("enable_metadata", True):
+            try:
+                measurements, measurement_notes = measurements_for_node(unique_id, prompt, dynprompt)
+                self._v100_notes.extend(measurement_notes)
+            except Exception as exc:
+                self._v100_notes.append(f"measurement collection failed: {exc!r}")
+        self.metadata_service.begin(record, user_fields_from_widgets(kwargs), include_model_paths, embed_a1111,
+                                    measurements)
 
         # 2. real colour conversion (the base class then attaches the matching profile)
         self._v100_main_profile = map_color_profile(kwargs.get("color_profile", ""))
@@ -163,6 +177,8 @@ class MetadataAwareSaveImageV100(_SaveImageV099d):
         if bridge_summary:
             lines.append(bridge_summary)
         lines.extend(f"note: {note}" for note in self._v100_notes)
+        if measurements:
+            lines.append("measurements stored: " + ", ".join(measurements.keys()))
         if record is not None:
             lines.append("")
             lines.append(record.summary())

@@ -103,16 +103,28 @@ def main() -> int:
                 keywords = parsed["standard"].get("keywords", [])
                 good = (success and "testModel_v1" in str(model) and "0.82" in str(sharpness)
                         and parsed["standard"].get("title") == "Entry title" and parsed["standard"].get("rating") == 4
-                        and "zqcomp test harbour" in parsed["standard"].get("description", "")
+                        and parsed["standard"].get("description", "") == "a zqcomp test harbour at dawn"
                         and all(k in keywords for k in ("zqfirst", "zqentry", "zqkeeper", "testModel_v1"))
                         and set(parsed["analysis"]) >= {"sharpness", "unipercept", "blur"}
                         and (parsed.get("record") or {}).get("positive", "").startswith("a zqcomp")
                         and not any(key.startswith("IPTC:") for key in tags))
+                # an analysis node written for the old system: its write must also reach the eiqa namespace
+                service = importlib.import_module(f"custom_nodes.{os.path.basename(PACK)}").MetadataService(debug=False)
+                service.write_metadata(path, {"analysis": {"technical": {"blur": {"score": 412.5, "is_blurry": False}}}},
+                                       targets=["embedded"])
+                mirrored = read_file(path)
+                mirror_ok = (mirrored["analysis"].get("technical", {}).get("blur", {}).get("score") == 412.5
+                             and set(mirrored["analysis"]) >= {"sharpness", "unipercept", "blur", "technical"}
+                             and mirrored["standard"].get("description", "") == "a zqcomp test harbour at dawn"
+                             and mirrored["standard"].get("title") == "Entry title")
+                good = good and mirror_ok
                 ok = ok and good
-                print(f"round trip {extension}: ok={good} model={model!r} sharpness={sharpness!r} "
+                print(f"round trip {extension}: ok={good} old-service mirror={mirror_ok} model={model!r} sharpness={sharpness!r} "
                       f"rating={parsed['standard'].get('rating')} analysis={sorted(parsed['analysis'])} "
                       f"keywords={keywords}")
                 if not good:
+                    print("   after old-service write:", sorted(mirrored["analysis"]), "| desc:",
+                          mirrored["standard"].get("description", "")[:90], "| title:", mirrored["standard"].get("title"))
                     print("   entry status:", status, "| measure:", measure_status, "| title:", parsed["standard"].get("title"),
                           "| iptc:", [k for k in tags if k.startswith("IPTC:")][:5],
                           "| desc:", parsed["standard"].get("description", "")[:80])

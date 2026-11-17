@@ -21,10 +21,10 @@ import json
 import os
 from typing import Any, Dict, List, Optional
 
-from . import color, embed, reader
+from . import color, embed, reader, service_mirror
 from .fields import StandardFields, UserFields, build_standard_fields
 from .record import GenerationRecord, ModelRef, SamplingPass
-from .writer import build_sidecar_packet, patch_metadata, update_metadata
+from .writer import build_sidecar_packet, patch_metadata, snapshot_standard, update_metadata
 
 _NO_EMBED_EXTENSIONS = (".svg",)
 
@@ -103,13 +103,16 @@ class ServiceBridge:
         self.include_paths = False
         self.a1111 = True
         self.enabled = True
+        self.measurements: Dict[str, Any] = {}
         self.results: List[Dict[str, Any]] = []
 
     def __getattr__(self, name: str) -> Any:        # everything else behaves as before
         return getattr(self._legacy, name)
 
-    def begin(self, record: Optional[GenerationRecord], user: UserFields, include_paths: bool, a1111: bool) -> None:
+    def begin(self, record: Optional[GenerationRecord], user: UserFields, include_paths: bool, a1111: bool,
+              measurements: Optional[Dict[str, Any]] = None) -> None:
         self.record, self.user, self.include_paths, self.a1111 = record, user, include_paths, a1111
+        self.measurements = dict(measurements or {})
         self.results = []
 
     def write_metadata(self, filepath: str, metadata: Optional[Dict[str, Any]] = None,
@@ -117,6 +120,8 @@ class ServiceBridge:
         targets = list(targets or ["embedded"])
         metadata = metadata or {}
         analysis = metadata.get("analysis") if isinstance(metadata.get("analysis"), dict) else None
+        if self.measurements:                               # collected automatically for this image
+            analysis = {**self.measurements, **(analysis or {})}
         extension = os.path.splitext(filepath)[1].lower()
         status: Dict[str, bool] = {target: True for target in targets}
         if not os.path.isfile(filepath):                    # the image itself was not saved
@@ -139,8 +144,11 @@ class ServiceBridge:
             if self.record is not None:
                 generation = legacy_metadata.setdefault("ai_info", {}).setdefault("generation", {})
                 generation.update(legacy_generation_overlay(self.record))
+            if self.measurements and isinstance(legacy_metadata.get("analysis", {}), dict):
+                legacy_metadata["analysis"] = {**self.measurements, **legacy_metadata.get("analysis", {})}
             try:
-                self._legacy.write_metadata(filepath, legacy_metadata, targets=legacy_targets)
+                with service_mirror.suppressed():
+                    self._legacy.write_metadata(filepath, legacy_metadata, targets=legacy_targets)
             except Exception as exc:
                 self.results.append({"path": filepath, "embedded": True, "warnings": [f"{'/'.join(legacy_targets)} not written: {exc!r}"]})
                 for target in legacy_targets:
@@ -282,7 +290,12 @@ class CompanionService:
         metadata = metadata or {}
         self.last_warnings = []
         try:
-            results = self._legacy.write_metadata(filepath, metadata, targets=targets)
+            saved = snapshot_standard(filepath) if os.path.exists(filepath) else None
+        except Exception:
+            saved = None
+        try:
+            with service_mirror.suppressed():
+                results = self._legacy.write_metadata(filepath, metadata, targets=targets)
             results = dict(results) if isinstance(results, dict) else {t: bool(results) for t in targets}
         except Exception as exc:
             results = {t: False for t in targets}
@@ -330,7 +343,7 @@ class CompanionService:
                 fields.hierarchical_keywords.append(f"Project|{user.project.strip()}")
 
         outcome = patch_metadata(filepath, fields, write_record, analysis, rating=rating, project=user.project,
-                                 embedded=want_embedded, sidecar=want_sidecar, strip_iim=True)
+                                 embedded=want_embedded, sidecar=want_sidecar, strip_iim=True, restore=saved)
         self.last_warnings.extend(outcome.get("warnings", []))
         if outcome.get("embedded") is not None:
             results["embedded"] = bool(outcome["embedded"])

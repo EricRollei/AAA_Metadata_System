@@ -384,3 +384,24 @@ New node: Eric_Metadata_Add_Measurements_V1 (measured data -> eiqa, full nested 
 Still open: Photoshop-readable layered TIFF, true layer masks and 16-bit PSD; workflow in JPEG / WebP
 (needs Eric's decision, see chat); Lightroom plugin v2; load nodes; cleanup (Phase 5); remaining nodes (Phase 6);
 subgraph empty-prompt case; nothing here has run inside a live ComfyUI yet.
+
+## Update 2026-11-16 (night) - automatic measurement collection
+
+Eric: workflow in JPG can be ignored; measurements should be auto-collected where possible
+(Eric-image-classification: 28 node files, all call `MetadataService.write_metadata(path, {"analysis": ...})`).
+
+- `aaa_meta/measurements.py` + save node widget `collect_measurements` (appended, default on): results of
+  measuring nodes that ran in this prompt on the saved image (image passes through them, or they read it from
+  a node feeding the save) are stored in eiqa, grouped per node, named by the node's RETURN_NAMES.
+  Measuring node = module inside a measuring pack (default Eric-image-classification; env
+  AAA_META_MEASUREMENT_PACKS adds packs) or a node that calls aaa_meta.publish({"measurements": {...}}).
+  Only current-run results are used; cached nodes are reported in the summary, not guessed.
+- `aaa_meta/service_mirror.py`, installed from the pack `__init__`: every `MetadataService.write_metadata`
+  call carrying `analysis` is mirrored into eiqa v2 (embedded / sidecar per the node's own switches).
+  No change in the analysis pack. AAA_META_MIRROR=0 disables.
+- Found: the old embedded writer garbles an existing dc:description when it rewrites a file
+  ("x-default {'lang=...': '...'}"). Mirror and CompanionService now snapshot the text fields before the old
+  write and put them back. Old nodes used directly on files (v2 Entry etc.) still have that bug.
+- Checks: unit tests 19 pass; check_node_v100 NODE OK (14 cases); check_companions COMPANIONS OK incl. the
+  old-service mirror. The in-graph collection is unit-tested with simulated captures only - not yet run with
+  real analysis nodes in ComfyUI.

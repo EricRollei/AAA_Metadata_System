@@ -432,6 +432,68 @@ def test_reader_patch_and_companion_bridge():
     assert icc[36:40] == b"acsp" and int.from_bytes(icc[:4], "big") == len(icc)
 
 
+def test_measurement_collection_and_mirror():
+    from aaa_meta.graph import PromptGraph
+    from aaa_meta.measurements import collect_measurements
+    graph = PromptGraph.from_prompt({
+        "1": {"class_type": "VAEDecode", "inputs": {}},
+        "2": {"class_type": "Eric_UniPercept", "inputs": {"image": ["1", 0]}},          # image passes through
+        "3": {"class_type": "Eric_Blur", "inputs": {"image": ["2", 0]}},                 # side branch
+        "4": {"class_type": "Eric_Keyword_Sorter", "inputs": {"image": ["2", 0]}},       # in the pack, measures nothing
+        "5": {"class_type": "SomeOtherNode", "inputs": {"image": ["1", 0]}},
+        "6": {"class_type": "Eric_Blur", "inputs": {"image": ["7", 0]}},                 # other image
+        "7": {"class_type": "LoadImage", "inputs": {}},
+        "8": {"class_type": "Eric_NR_IQA", "inputs": {"image": ["2", 0]}},               # did not run this time
+        "9": {"class_type": "Save", "inputs": {"images": ["2", 0]}},
+    })
+    pack = {"module": "x", "file": "C:/c/custom_nodes/Eric-image-classification/nodes/a.py"}
+    infos = {
+        "Eric_UniPercept": {**pack, "return_names": ("image", "iaa", "iqa", "summary", "results"),
+                            "return_types": ("IMAGE", "FLOAT", "FLOAT", "STRING", "DICT")},
+        "Eric_Blur": {**pack, "return_names": ("is_blurry", "variance"), "return_types": ("BOOLEAN", "FLOAT")},
+        "Eric_Keyword_Sorter": {**pack, "return_names": ("image", "path", "status"), "return_types": ("IMAGE", "STRING", "STRING")},
+        "Eric_NR_IQA": {**pack, "return_names": ("image", "report", "results"), "return_types": ("IMAGE", "STRING", "DICT")},
+        "SomeOtherNode": {"module": "y", "file": "C:/c/custom_nodes/other/a.py", "return_names": ("v",), "return_types": ("FLOAT",)},
+    }
+
+    def entry(outputs, prompt_id="p1"):
+        return {"class_name": "", "prompt_id": prompt_id, "inputs": {}, "outputs": outputs, "published": {}}
+
+    captured = {
+        "2": entry({1: 71.2, 2: 64.0, 3: "good light", 4: {"iaa": 71.2, "detail": {"x": 1}}}),
+        "3": entry({0: False, 1: 412.5}),
+        "4": entry({1: "D:/sorted", 2: "moved"}),
+        "5": entry({0: 3.3}),
+        "6": entry({0: True, 1: 5.0}),
+        "8": entry({1: "old", 2: {"brisque": 20.0}}, prompt_id="p0"),
+    }
+    found, notes = collect_measurements(graph, "9", captured, "p1", infos.get)
+    assert set(found) == {"Eric_UniPercept", "Eric_Blur"}, found
+    assert found["Eric_UniPercept"] == {"iaa": 71.2, "iqa": 64.0, "summary": "good light", "results": {"iaa": 71.2, "detail": {"x": 1}}}
+    assert found["Eric_Blur"] == {"is_blurry": False, "variance": 412.5}
+    assert len(notes) == 1 and "Eric_NR_IQA" in notes[0]
+
+    # the old service's write is mirrored, and the v2 bridges can switch that off
+    from aaa_meta import service_mirror
+    calls = []
+
+    class Service:
+        def write_metadata(self, filepath, metadata, targets=None):
+            calls.append("old")
+            return {"embedded": True}
+
+    original_mirror = service_mirror._mirror
+    service_mirror._mirror = lambda filepath, metadata, targets, saved=None: calls.append("mirror") if not getattr(service_mirror._local, "off", False) else None
+    try:
+        assert service_mirror.install(Service) is True and service_mirror.install(Service) is False
+        assert Service().write_metadata("f", {"analysis": {"a": 1}}, targets=["embedded"]) == {"embedded": True}
+        with service_mirror.suppressed():
+            Service().write_metadata("f", {"analysis": {"a": 1}}, ["embedded"])
+    finally:
+        service_mirror._mirror = original_mirror
+    assert calls == ["old", "mirror", "old"], calls
+
+
 if __name__ == "__main__":
     failed = 0
     for name, func in sorted(globals().items()):

@@ -20,6 +20,12 @@ sys.modules['AAA_Metadata_System'] = sys.modules.get(__name__, sys.modules[__nam
 
 # Export core functionality for easy access
 from .eric_metadata.service import MetadataService
+# v2: measurements written through MetadataService also land in the eiqa namespace (AAA_META_MIRROR=0 disables)
+try:
+    from .aaa_meta.service_mirror import install as _install_v2_mirror
+    _install_v2_mirror(MetadataService)
+except Exception as _mirror_error:
+    print(f"[AAA Metadata] v2 measurement mirror not installed: {_mirror_error!r}")
 from .eric_metadata.handlers.base import BaseHandler
 from .eric_metadata.handlers.xmp import XMPSidecarHandler
 from .eric_metadata.handlers.embedded import EmbeddedMetadataHandler
