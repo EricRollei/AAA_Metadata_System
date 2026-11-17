@@ -12,8 +12,8 @@ What changes is underneath:
   * it is written to the fields Lightroom / XnView / Capture One search
     (description, keywords, headline, instructions) plus the hcai / eiqa
     namespaces, and read back to confirm
-  * choosing Adobe RGB or ProPhoto now converts the pixels (the old node only
-    attached the profile)
+  * choosing Adobe RGB, ProPhoto or Display P3 (new choice) converts the pixels
+    (the old node only attached the profile)
   * 16-bit TIFF is written from the full-precision data (was 8-bit x 256)
 
 New widgets are appended AFTER the existing ones so nothing moves.
@@ -22,8 +22,11 @@ Author: Eric Hiss (GitHub: EricRollei)
 License: Dual License (CC BY-NC 4.0 / Commercial) - see LICENSE
 """
 
+import os
+
 import numpy as np
 import torch
+from PIL import Image
 
 from .eric_metadata_save_image_v099d import MetadataAwareSaveImage as _SaveImageV099d
 from ..aaa_meta import color
@@ -31,6 +34,7 @@ from ..aaa_meta.legacy_bridge import ServiceBridge, map_color_profile, user_fiel
 from ..aaa_meta.pixels import save_tiff16
 from ..aaa_meta.runtime import record_for_node
 
+_DISPLAY_P3 = "Display P3"
 _LAYER_INPUTS = ("mask_layer_1", "mask_layer_2", "overlay_layer_1", "overlay_layer_2")
 _OVERLAY_INPUTS = ("overlay_layer_1", "overlay_layer_2")
 
@@ -65,6 +69,11 @@ class MetadataAwareSaveImageV100(_SaveImageV099d):
     def INPUT_TYPES(cls):
         types = super().INPUT_TYPES()
         optional = dict(types.get("optional", {}))          # existing widgets keep their order
+        for name in ("color_profile", "additional_format_color_profile"):   # one more choice in the same widget
+            choices, options = optional[name][0], optional[name][1]
+            if _DISPLAY_P3 not in choices:
+                extended = [c for c in choices if c != "None"] + [_DISPLAY_P3] + (["None"] if "None" in choices else [])
+                optional[name] = (extended, options)
         optional["hash_models"] = (["cached", "compute", "off"], {
             "default": "cached",
             "tooltip": "Model hashes for Civitai: cached = use hashes already known; compute = also hash "
@@ -128,7 +137,7 @@ class MetadataAwareSaveImageV100(_SaveImageV099d):
         # 2. real colour conversion (the base class then attaches the matching profile)
         self._v100_main_profile = map_color_profile(kwargs.get("color_profile", ""))
         self._v100_srgb_frames = None
-        if convert_colors and self._v100_main_profile in (color.PROFILE_ADOBE, color.PROFILE_PROPHOTO):
+        if convert_colors and self._v100_main_profile in color.CONVERTED_PROFILES:
             try:
                 self._v100_srgb_frames = images.cpu().numpy() if torch.is_tensor(images) else np.asarray(images)
                 images = _convert_tensor(images, self._v100_main_profile)
@@ -173,8 +182,32 @@ class MetadataAwareSaveImageV100(_SaveImageV099d):
             return result[0], False, ""
         return result
 
+    def _convert_to_pil(self, image):
+        # single-channel inputs (a MASK-shaped tensor, or H x W x 1) made v099d's converter fail
+        if torch.is_tensor(image):
+            if image.ndim == 4:
+                image = image[0]
+            if image.ndim == 3 and image.shape[-1] == 1:
+                image = image[..., 0]
+            elif image.ndim == 3 and image.shape[0] == 1 and image.shape[-1] > 4:
+                image = image[0]
+        return super()._convert_to_pil(image)
+
+    def _get_color_profile(self, profile_name):
+        if profile_name == _DISPLAY_P3:
+            return color.display_p3_icc()
+        return super()._get_color_profile(profile_name)
+
     def _get_format_parameters(self, **kwargs):
         params = super()._get_format_parameters(**kwargs)
+        # v099d's 8-bit PNG / JPEG / WebP and APNG writers look these up under names that
+        # were never passed on, so the widgets had no effect there (profile was always
+        # sRGB v4 Appearance, workflow always embedded, APNG always 10 fps / loop forever).
+        params["color_profile"] = kwargs.get("color_profile", "sRGB v4 Appearance")
+        params["embed_workflow"] = kwargs.get("embed_workflow", True)
+        params["quality_preset"] = kwargs.get("quality_preset", "Balanced")
+        params["fps"] = params.get("apng_fps", 10)
+        params["loops"] = params.get("apng_loops", 0)
         if str(kwargs.get("file_format", "")).lower() in ("jpg", "jpeg"):
             return _JpegFormatParams(params)
         return params
@@ -197,6 +230,40 @@ class MetadataAwareSaveImageV100(_SaveImageV099d):
         return super()._save_as_tiff(image, image_path, metadata=metadata, prompt=prompt,
                                      extra_pnginfo=extra_pnginfo, **kwargs)
 
+    def _save_as_apng(self, images, image_path, metadata=None, prompt=None, extra_pnginfo=None, **kwargs):
+        # v099d needs the optional "apng" package; without it nothing was saved.
+        # Pillow writes animated PNG itself, so use that when the old writer gives up.
+        try:
+            if super()._save_as_apng(images, image_path, metadata=metadata, prompt=prompt,
+                                     extra_pnginfo=extra_pnginfo, **kwargs) and os.path.isfile(image_path):
+                return True
+        except Exception as exc:
+            self._v100_notes.append(f"v099d APNG writer failed ({exc!r}); used Pillow")
+        try:
+            arrays = []
+            for item in ([images] if (torch.is_tensor(images) or isinstance(images, np.ndarray)) else list(images)):
+                array = item.detach().cpu().numpy() if torch.is_tensor(item) else np.asarray(item)
+                arrays.extend(list(array) if array.ndim == 4 else [array])
+            pil_frames = [Image.fromarray((np.clip(a.astype(np.float32), 0.0, 1.0) * 255.0 + 0.5).astype(np.uint8))
+                          if a.dtype != np.uint8 else Image.fromarray(a) for a in arrays]
+            pnginfo = None
+            if kwargs.get("embed_workflow", True) and prompt:
+                pnginfo = self._prepare_workflow_pnginfo(prompt, extra_pnginfo)
+            profile_name = kwargs.get("color_profile", "sRGB v4 Appearance")
+            icc = self._get_color_profile(profile_name) if profile_name != "None" else None
+            fps = max(float(kwargs.get("fps", 10) or 10), 0.1)
+            options = {"format": "PNG", "save_all": True, "append_images": pil_frames[1:],
+                       "duration": int(round(1000.0 / fps)), "loop": int(kwargs.get("loops", 0) or 0)}
+            if pnginfo is not None:
+                options["pnginfo"] = pnginfo
+            if icc:
+                options["icc_profile"] = icc
+            pil_frames[0].save(image_path, **options)
+            return True
+        except Exception as exc:
+            self._v100_notes.append(f"APNG not saved: {exc!r}")
+            return False
+
     def _save_additional_format(self, image, primary_path, metadata, prompt=None, extra_pnginfo=None, **kwargs):
         # The second copy may use a different colour profile than the main file:
         # start again from the sRGB pixels so it is not converted twice.
@@ -205,7 +272,7 @@ class MetadataAwareSaveImageV100(_SaveImageV099d):
             if additional_profile != self._v100_main_profile:
                 index = min(max(self._v100_frame_index, 0), len(self._v100_srgb_frames) - 1)
                 image = self._v100_srgb_frames[index]
-                if additional_profile in (color.PROFILE_ADOBE, color.PROFILE_PROPHOTO):
+                if additional_profile in color.CONVERTED_PROFILES:
                     converted = color.convert_from_srgb(image[..., :3], additional_profile)
                     image = np.concatenate([converted, image[..., 3:]], axis=-1) if image.shape[-1] == 4 else converted
         return super()._save_additional_format(image, primary_path, metadata, prompt=prompt,

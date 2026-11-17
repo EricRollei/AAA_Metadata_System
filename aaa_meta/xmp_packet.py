@@ -201,7 +201,8 @@ def _serialize(root: ET.Element) -> bytes:
 def build_packet(fields: Optional[StandardFields] = None, record: Optional[GenerationRecord] = None,
                  analysis: Optional[Dict[str, Any]] = None, include_paths: bool = False,
                  include_record_json: bool = True, omit_prompt_copy: bool = False,
-                 project: str = "", custom: Optional[Dict[str, Any]] = None) -> bytes:
+                 project: str = "", custom: Optional[Dict[str, Any]] = None,
+                 rating: Optional[int] = None) -> bytes:
     """
     fields    standard catalog fields (from fields.build_standard_fields)
     record    generation record -> hcai namespace
@@ -235,6 +236,8 @@ def build_packet(fields: Optional[StandardFields] = None, record: Optional[Gener
     if record is not None:
         _add_generation(desc, record, include_paths, include_record_json, omit_prompt_copy)
 
+    if rating is not None:
+        _simple(desc, "xmp", "Rating", int(rating))
     _simple(desc, "hcai", "Project", project)
     if custom:
         add_value(desc, "hcai", "Custom", custom)
@@ -343,3 +346,26 @@ def read_record_json(packet: bytes) -> Optional[Dict[str, Any]]:
             except Exception:
                 return None
     return None
+
+
+def read_analysis_json(packet: Optional[bytes]) -> Dict[str, Any]:
+    """The measured data (eiqa) already in a packet, as written by build_packet. {} when none."""
+    body = _strip_packet_wrapper(packet) if packet else ""
+    if not body:
+        return {}
+    try:
+        root = ET.fromstring(body)
+    except ET.ParseError:
+        return {}
+    raw = None
+    for element in root.iter(q("eiqa", "AnalysisJSON")):
+        raw = element.text
+        break
+    if raw is None:
+        for d in _descriptions(root):
+            raw = d.attrib.get(q("eiqa", "AnalysisJSON")) or raw
+    try:
+        data = json.loads(raw) if raw else {}
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}

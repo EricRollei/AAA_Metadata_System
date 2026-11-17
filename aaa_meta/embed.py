@@ -132,10 +132,12 @@ def read_xmp(path: str) -> Optional[bytes]:
     return out if code == 0 and out.strip() else None
 
 
-def update_file(path: str, packet: bytes, merge: bool = True) -> Tuple[bool, str]:
+def update_file(path: str, packet: bytes, merge: bool = True,
+                extra_args: Optional[List[str]] = None) -> Tuple[bool, str]:
     """
     Put `packet` into an existing file without touching its pixels.
     merge=True keeps what is already there (see xmp_packet.merge_packets).
+    extra_args: further exiftool arguments for the same pass (e.g. "-iptc:all=").
     Returns (ok, message).
     """
     if find_exiftool() is None:
@@ -145,7 +147,7 @@ def update_file(path: str, packet: bytes, merge: bool = True) -> Tuple[bool, str
     try:
         temp.write(final)
         temp.close()
-        code, out, err = run_exiftool(["-overwrite_original", "-m", f"-xmp<={temp.name}", path])
+        code, out, err = run_exiftool(["-overwrite_original", "-m", *(extra_args or []), f"-xmp<={temp.name}", path])
         text = (out.decode("utf-8", errors="replace") + " " + err).strip()
         return (code == 0 and "1 image files updated" in text), text
     finally:
@@ -172,8 +174,23 @@ def write_text_tag(path: str, tag: str, text: str) -> Tuple[bool, str]:
             pass
 
 
-def write_sidecar(image_path: str, packet: bytes) -> str:
-    sidecar = os.path.splitext(image_path)[0] + ".xmp"
+def sidecar_path(image_path: str) -> str:
+    return os.path.splitext(image_path)[0] + ".xmp"
+
+
+def read_sidecar(image_path: str) -> Optional[bytes]:
+    try:
+        with open(sidecar_path(image_path), "rb") as handle:
+            return handle.read() or None
+    except OSError:
+        return None
+
+
+def write_sidecar(image_path: str, packet: bytes, merge: bool = False) -> str:
+    """merge=True keeps what an existing sidecar already holds."""
+    sidecar = sidecar_path(image_path)
+    if merge:
+        packet = merge_packets(read_sidecar(image_path), packet)
     with open(sidecar, "wb") as handle:
         handle.write(packet)
     return sidecar

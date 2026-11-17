@@ -61,6 +61,14 @@ def main() -> int:
         {"file_format": "tiff", "bit_depth": "16-bit", "color_profile": "ProPhoto RGB"},
         {"file_format": "psd"},
         {"file_format": "webp"},
+        {"file_format": "png", "color_profile": "Display P3"},
+        {"file_format": "jpg", "color_profile": "Adobe RGB"},
+        {"file_format": "webp", "color_profile": "ProPhoto RGB"},
+        {"file_format": "apng"},
+        {"file_format": "psd", "_layers": True},
+        {"file_format": "tiff", "_layers": True},
+        {"file_format": "png", "_layers": True},
+        {"file_format": "jpg", "color_profile": "Display P3"},
     ]
     with tempfile.TemporaryDirectory() as folder:
         for number, case in enumerate(cases):
@@ -75,7 +83,13 @@ def main() -> int:
                         defaults[name] = options["default"]
                     elif isinstance(spec[0], list) and spec[0]:
                         defaults[name] = spec[0][0]
-            defaults.update(case)
+            defaults.update({k: v for k, v in case.items() if not k.startswith("_")})
+            if case.get("_layers"):
+                defaults.update({"overlay_layer_1": torch.rand(1, 128, 256, 3), "overlay_1_name": "Glow",
+                                 "overlay_1_blend_mode": "screen", "overlay_1_opacity": 128,
+                                 "mask_layer_1": torch.rand(1, 128, 256, 3), "mask_1_name": "Subject",
+                                 "mask_layer_2": torch.rand(1, 128, 256, 1), "mask_2_name": "Sky",
+                                 "include_mask_layers": True})
             defaults.update({"custom_output_directory": target, "title": "Node check", "keywords": "zqkw, check",
                              "project": "zqproject", "description": "typed description", "save_xmp": True,
                              "save_txt": True})
@@ -95,9 +109,18 @@ def main() -> int:
             description = str(tags.get("XMP-dc:Description", ""))
             good = (bool(filepath) and filepath.startswith(target) and "zqnode test courtyard" in description
                     and "zqkw" in (tags.get("XMP-dc:Subject") or []) and "METADATA PROBLEM" not in summary
+                    and not any(key.startswith("IPTC:") for key in tags)        # no old-style IPTC left behind
+                    and (case.get("color_profile") is None
+                         or case["color_profile"].split()[0] in str(tags.get("ICC_Profile:ProfileDescription")))
                     and "NOT embedded" not in summary)
             ok = ok and good
-            print(f"case {case}: ok={good}\n   files={sorted(written)}\n   icc={tags.get('ICC_Profile:ProfileDescription')} "
+            if case.get("_layers") and filepath.lower().endswith(".psd"):
+                from psd_tools import PSDImage
+                layers = [(layer.name, str(layer.blend_mode).split(".")[-1], layer.opacity) for layer in PSDImage.open(filepath)]
+                print("   psd layers:", layers)
+                good = good and any(name == "Glow" and "SCREEN" in mode.upper() for name, mode, _ in layers)
+                ok = ok and good
+            print(f"case {case}: ok={good} saved_as={os.path.basename(filepath)}\n   files={sorted(written)}\n   icc={tags.get('ICC_Profile:ProfileDescription')} "
                   f"bits={tags.get('PNG:BitDepth') or tags.get('IFD0:BitsPerSample')} headline={tags.get('XMP-photoshop:Headline')}")
             if not good:
                 print("   summary:", summary[:900])

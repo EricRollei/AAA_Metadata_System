@@ -359,3 +359,28 @@ Eric's feedback: the slim v1.0 node dropped features (no save folder) and change
   jpg + webp copy / 16-bit ProPhoto tiff / psd / webp all saved to a custom folder and verified. NODE OK.
 - `tools/backfill_library.py`: dry-run-by-default tool that makes existing PNGs searchable from their embedded workflow.
 - NOT yet tested inside a running ComfyUI. Layers (mask/overlay), APNG and SVG paths not exercised by the check.
+
+## Update 2026-11-16 (later) - Phase 3b part + Phase 4 companion nodes
+
+Save node v1.0
+- Display P3 added as a choice in `color_profile` / `additional_format_color_profile` (profile built in code,
+  matches LittleCMS output exactly). Pixels converted like Adobe RGB / ProPhoto.
+- v099d bugs found by the end-to-end check and corrected in the v1.0 subclass only:
+  8-bit PNG / JPEG / WebP always got sRGB v4 Appearance whatever the widget said; `embed_workflow` off was
+  ignored on those formats; APNG fps / loops widgets ignored; APNG saved nothing without the optional `apng`
+  package (Pillow fallback added); single-channel layer inputs crashed the converter.
+- Old-style IPTC (IIM) is removed when the v2 metadata is written (Capture One prefers IIM on JPEG / TIFF).
+- `tests_v2/check_node_v100.py` now covers 14 cases incl. APNG, Display P3 and overlay + mask layers
+  (PSD layer names / blend mode / opacity read back). NODE OK.
+
+Companion nodes (each a subclass of the previous version, widgets identical, service wrapped by
+`legacy_bridge.CompanionService`): Eric_Metadata_Entry_V3, Eric_Metadata_Query_V4, Eric_Metadata_Filter_V3,
+EnhancedMetadataFilterNode_V3, Eric_Metadata_Debugger_V3, MetadataConsolidatorNode_V3.
+New node: Eric_Metadata_Add_Measurements_V1 (measured data -> eiqa, full nested data, accumulates).
+- `aaa_meta/reader.py`: reads v2 data and the old ericproject.org namespaces from file or sidecar.
+- `writer.patch_metadata`: changes only the given values; keywords and measurements accumulate.
+- `tests_v2/check_companions.py`: save -> Entry V3 -> Add Measurements x2 -> Query V4 on png / jpg / tiff. COMPANIONS OK.
+
+Still open: Photoshop-readable layered TIFF, true layer masks and 16-bit PSD; workflow in JPEG / WebP
+(needs Eric's decision, see chat); Lightroom plugin v2; load nodes; cleanup (Phase 5); remaining nodes (Phase 6);
+subgraph empty-prompt case; nothing here has run inside a live ComfyUI yet.

@@ -21,7 +21,7 @@ from .a1111 import build_parameters
 from .fields import StandardFields, UserFields, build_standard_fields
 from .record import GenerationRecord
 from .verify import verify_file
-from .xmp_packet import build_packet
+from .xmp_packet import build_packet, read_analysis_json
 
 _EXIF_IFD = 0x8769
 _USER_COMMENT = 0x9286
@@ -135,12 +135,17 @@ def save_with_metadata(image: Image.Image, path: str, record: Optional[Generatio
 
 def update_metadata(path: str, record: Optional[GenerationRecord] = None, user: Optional[UserFields] = None,
                     analysis: Optional[Dict[str, Any]] = None, include_paths: bool = False,
-                    verify: bool = True, a1111: bool = False) -> Dict[str, Any]:
+                    verify: bool = True, a1111: bool = False, strip_iim: bool = False) -> Dict[str, Any]:
     """
     Add or replace metadata in an existing file (any format exiftool writes, incl. PSD).
     Pixels and everything else already in the file are kept.
     a1111: also write the A1111 parameters text (PNG text chunk, or EXIF UserComment for JPEG/WebP).
+    strip_iim: remove old-style IPTC (IIM) from the file. Capture One shows IIM in
+               preference to XMP on JPEG/TIFF, so a stale IIM block hides the new values.
+    Measured data already in the file is kept: new analysis entries are added to it.
     """
+    if analysis:
+        analysis = {**read_analysis_json(embed.read_xmp(path)), **analysis}
     extension = os.path.splitext(path)[1].lower().lstrip(".")
     fields = None
     if record is not None or user is not None:
@@ -159,7 +164,7 @@ def update_metadata(path: str, record: Optional[GenerationRecord] = None, user: 
         if len(xmp) > embed.JPEG_XMP_LIMIT:
             xmp = packet(with_json=False, omit_prompt_copy=True)
             warnings.append("JPEG size limit: second copy of the prompt left out (description keeps it)")
-    ok, message = embed.update_file(path, xmp, merge=True)
+    ok, message = embed.update_file(path, xmp, merge=True, extra_args=["-iptc:all="] if strip_iim else None)
     if not ok:
         warnings.append(message)
     if ok and a1111 and record is not None:
@@ -184,6 +189,44 @@ def build_sidecar_packet(record: Optional[GenerationRecord] = None, user: Option
         fields = build_standard_fields(record or GenerationRecord(), user, _creator_tool(record))
     return build_packet(fields, record, analysis, include_paths,
                         project=user.project if user else "", custom=user.custom if user else None)
+
+
+def patch_metadata(path: str, fields: Optional[StandardFields] = None, record: Optional[GenerationRecord] = None,
+                   analysis: Optional[Dict[str, Any]] = None, rating: Optional[int] = None, project: str = "",
+                   custom: Optional[Dict[str, Any]] = None, embedded: bool = True, sidecar: bool = False,
+                   strip_iim: bool = False) -> Dict[str, Any]:
+    """
+    Change only the given values in an existing file and / or its .xmp sidecar.
+    Empty values are left alone (nothing is erased); keywords are added to the
+    ones already there; measured data is added to what is already stored.
+    Returns {"embedded": bool|None, "sidecar": bool|None, "warnings": [...]}.
+    """
+    result: Dict[str, Any] = {"path": path, "embedded": None, "sidecar": None, "warnings": []}
+
+    def packet_for(existing: Optional[bytes]) -> bytes:
+        merged = {**read_analysis_json(existing), **analysis} if analysis else None
+        return build_packet(fields, record, merged, project=project, custom=custom, rating=rating)
+
+    extension = os.path.splitext(path)[1].lower().lstrip(".")
+    if embedded:
+        xmp = packet_for(embed.read_xmp(path))
+        if extension in ("jpg", "jpeg") and len(xmp) > embed.JPEG_XMP_LIMIT and record is not None:
+            merged = {**read_analysis_json(embed.read_xmp(path)), **analysis} if analysis else None
+            xmp = build_packet(fields, record, merged, include_record_json=False, project=project,
+                               custom=custom, rating=rating)
+            result["warnings"].append("JPEG size limit: JSON copy of the record left out")
+        ok, message = embed.update_file(path, xmp, merge=True, extra_args=["-iptc:all="] if strip_iim else None)
+        result["embedded"] = ok
+        if not ok:
+            result["warnings"].append(message)
+    if sidecar:
+        try:
+            embed.write_sidecar(path, packet_for(embed.read_sidecar(path)), merge=True)
+            result["sidecar"] = True
+        except Exception as exc:
+            result["sidecar"] = False
+            result["warnings"].append(f"sidecar not written: {exc!r}")
+    return result
 
 
 def add_analysis(path: str, analysis: Dict[str, Any]) -> Dict[str, Any]:

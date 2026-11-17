@@ -392,6 +392,46 @@ def test_user_description_project_and_legacy_overlay():
     assert user_fields_from_widgets({"custom_metadata": "not json"}).custom == {"text": "not json"}
 
 
+def test_reader_patch_and_companion_bridge():
+    import io
+    from aaa_meta import color
+    from aaa_meta.fields import UserFields, build_standard_fields
+    from aaa_meta.legacy_bridge import apply_typed_generation, to_legacy_shape
+    from aaa_meta.reader import parse_packet
+    from aaa_meta.xmp_packet import build_packet, merge_packets, read_analysis_json
+    record = _sample_record()
+    user = UserFields(title="T", keywords=["k1"], project="P1", custom={"client": "x"})
+    packet = build_packet(build_standard_fields(record, user), record, {"sharpness": 0.82, "uni": {"iaa": 70.5, "note": "soft"}},
+                          project="P1", custom=user.custom, rating=4)
+    parsed = parse_packet(packet)
+    assert parsed["standard"]["title"] == "T" and parsed["standard"]["rating"] == 4 and "k1" in parsed["standard"]["keywords"]
+    assert parsed["analysis"] == {"sharpness": 0.82, "uni": {"iaa": 70.5, "note": "soft"}}
+    assert parsed["record"]["positive"] == record.positive and parsed["project"] == "P1" and parsed["custom"] == {"client": "x"}
+    shaped = to_legacy_shape(parsed)
+    assert shaped["ai_info"]["generation"]["seed"] == 447606998181262 and shaped["ai_info"]["generation"]["sampler"] == "lcm"
+    assert shaped["basic"]["title"] == "T" and shaped["analysis"]["uni"]["iaa"] == 70.5
+    # a later measurement is added beside the earlier ones
+    second = build_packet(None, None, {**read_analysis_json(packet), "blur": 0.1})
+    merged = parse_packet(merge_packets(packet, second))
+    assert set(merged["analysis"]) == {"sharpness", "uni", "blur"} and merged["standard"]["title"] == "T"
+    # old-namespace data is still readable
+    legacy = (b'<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">'
+              b'<rdf:Description rdf:about="" xmlns:ai="http://ericproject.org/schemas/ai/1.0/" ai:model="old">'
+              b'<ai:generation rdf:parseType="Resource"><ai:seed>5</ai:seed></ai:generation></rdf:Description></rdf:RDF></x:xmpmeta>')
+    assert parse_packet(legacy)["legacy"]["ai"] == {"generation": {"seed": 5}, "model": "old"}
+    # hand-typed values
+    manual = apply_typed_generation(None, {"prompt": "typed", "model": "m.safetensors", "seed": 9, "steps": 20, "sampler": "euler"})
+    assert manual.positive == "typed" and manual.base_models[0].stem == "m" and manual.seed == 9 and manual.capture_mode == "manual"
+    kept = apply_typed_generation(_sample_record(), {"seed": 1})
+    assert kept.seed == 1 and kept.positive == record.positive and len(kept.loras) == len(record.loras)
+    # Display P3
+    import numpy as np
+    converted = color.convert_from_srgb(np.array([[1.0, 0.0, 0.0]]), color.PROFILE_P3)
+    assert [int(round(v * 255)) for v in converted[0]] == [234, 51, 35]
+    icc = color.display_p3_icc()
+    assert icc[36:40] == b"acsp" and int.from_bytes(icc[:4], "big") == len(icc)
+
+
 if __name__ == "__main__":
     failed = 0
     for name, func in sorted(globals().items()):
