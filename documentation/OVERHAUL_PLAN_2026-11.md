@@ -458,3 +458,13 @@ New
   ComfyUI/user, deleting the old runtime-hook module and unused parsers, version bump / registry publish.
 - Phase 6: `documentation/PHASE6_REMAINING_NODES_REVIEW.md` - survey + options A-G. Nothing changed in those nodes.
 - Checks: unit tests 22; check_node_v100 NODE OK; check_companions COMPANIONS OK (incl. load nodes).
+
+## Update 2026-11-17 (later) - Lightroom plugin 2.0.1
+
+Eric: plugin commands now show and work. On an older PNG (no v2 record) the negative prompt was joined onto the
+positive prompt. Cause: the plugin's own workflow parser collects every text it finds and joins them with " | ";
+it only recognises a negative prompt by the node's title.
+Fix: for older PNGs the plugin now uses a bundled copy of the graph core (`aaa_graph/` = aaa_meta graph, resolve,
+models, record, builder) and traces back from the save node; the old parser remains as fallback and for the
+keyword list. When aaa_meta's builder changes, copy those five files into the plugin's `aaa_graph/` again.
+Tested on the 16 fixture graphs and a classic KSampler graph; not on Eric's file (not found on disk here).
