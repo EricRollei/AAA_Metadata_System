@@ -7,7 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added (2026-11) - Metadata system 2.0
+## [0.2.0] - 2026-11-18
+
+### Added - Metadata system 2.0
 - **Metadata Save Image v1.0**: every option of v099d, plus generation data collected automatically while
   the workflow runs and written where Lightroom, XnView MP and Capture One search (caption, keywords,
   headline, instructions) and in the `hcai` / `eiqa` namespaces. Display P3, real colour conversion,
@@ -17,8 +19,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Load nodes v2: stored prompt / record / measurements as outputs, full-precision 16-bit loading,
   Photoshop layers from TIFF.
 - `tools/backfill_library.py`: makes existing PNGs searchable from their embedded workflow.
+- **Recipes**: a generator node that returns its own settings as JSON (a dict with a `*_settings_version`
+  key, e.g. Eric_Krea2 Ultra) has that statement stored with the image (`recipe` in the record, RECIPE
+  section in the .txt). Krea2 parameter sweeps: every image of the batch gets the record of its own cell -
+  checkpoint, LoRAs, prompt with trigger words, seed, stage settings - read from the sweep manifest and
+  the cell pictures. Stages that did not run are no longer listed as passes.
+- Save True SVG v2, Save Qwen Layers v2, file extractors V4 / V3, Workflow Toolkit v3, Civitai extractors V2.
 
-### Changed (2026-11)
+### Changed
+- The pack loads once. Imports by the names `AAA_Metadata_System` and `custom_nodes.AAA_Metadata_System`
+  resolve to the loaded pack whatever the folder is called (the registry installs it as
+  `aaa-metadata-system`, where those imports used to fail).
+- The first runtime-hook module (`eric_metadata/hooks/runtime_capture.py`, off by default) is retired;
+  collection is done by `aaa_meta.capture`. A placeholder keeps the old save nodes loading.
+- One menu tree, "Eric's Nodes/...", and a quiet console (`AAA_META_VERBOSE=1` for the full output).
+- `tifffile` added to `requirements.txt`.
 - Nodes with a newer version are labelled "(deprecated)" and listed under "Eric's Nodes/Deprecated".
   They still load and run.
 - `nodes/civitai_cache.json` is no longer tracked; the Multi-LoRA template moved to `resources/templates/`.

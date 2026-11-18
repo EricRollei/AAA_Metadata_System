@@ -691,6 +691,127 @@ def test_svg_metadata_categories_and_console():
         console.set_verbose(False)
 
 
+def _krea2_doc(**ultra):
+    base = {"seed_mode": "same_all_stages", "s1_steps": 12, "s1_cfg": 0.1, "s1_schedule": "bong_tangent",
+            "s1_sampler": "abnorsett_3m", "s1_noise": "white", "s1_eta": 0.05, "s1_start_step": 0, "s1_end_step": 0,
+            "upscale_to_stage2": 0.0, "s2_steps": 16, "s2_cfg": 1.2, "s2_start_step": 9, "s2_end_step": 16,
+            "s2_schedule": "linear", "s2_sampler": "euler", "upscale_to_stage3": 0.0, "s3_steps": 20, "s3_cfg": 1.3,
+            "s3_start_step": 16, "s3_end_step": 20, "s3_schedule": "beta", "s3_sampler": "abnorsett_3m"}
+    base.update(ultra)
+    return {"krea2_settings_version": 1, "ultra": base}
+
+
+def test_recipe_statement_and_sweep_cells():
+    import tempfile
+    from PIL import Image
+    from PIL.PngImagePlugin import PngInfo
+    from aaa_meta import recipes, text_report
+    from aaa_meta.xmp_packet import record_for_embedding
+
+    graph_dict = {
+        "1": {"class_type": "EricKrea2MultistageUltraV2",
+              "inputs": {"prompt": "panel prompt", "seed": 5, "s1_steps": 12, "s1_cfg": 0.1, "s1_sampler": "abnorsett_3m",
+                         "s1_schedule": "bong_tangent", "upscale_to_stage2": 0.0, "s2_steps": 16, "s2_cfg": 1.2,
+                         "s2_sampler": "euler", "upscale_to_stage3": 0.0, "s3_steps": 20, "s3_sampler": "abnorsett_3m"}},
+        "2": {"class_type": "SaveImage", "inputs": {"images": ["1", 0]}}}
+    graph = PromptGraph.from_prompt(graph_dict)
+
+    # --- a normal run: the statement is attached; stages that did not run are not listed
+    settings = _krea2_doc()
+    captured = {"1": {"prompt_id": "run", "inputs": dict(graph_dict["1"]["inputs"]),
+                      "outputs": {0: None, 6: json.dumps(settings, indent=2), 8: ""}, "files": [], "published": {}}}
+    record = build_record(graph, "2", captured, "run")
+    assert [p.steps for p in record.passes] == [12, 16, 20]            # the graph alone lists every stage
+    plan = recipes.find_plan(graph, "2", captured, "run")
+    assert plan is not None and not plan.is_sweep
+    stated = recipes.apply_plan(record, plan)
+    assert [(p.steps, p.sampler, p.scheduler) for p in stated.passes] == [(12, "abnorsett_3m", "bong_tangent")]
+    assert stated.passes[0].seed == 5 and stated.passes[0].extras == {"noise": "white", "eta": 0.05}
+    assert stated.recipe["kind"] == "krea2_settings" and stated.recipe["settings"]["ultra"]["s2_steps"] == 16
+    assert [p.steps for p in record.passes] == [12, 16, 20]            # the original record is untouched
+    two = recipes.apply_plan(record, recipes.find_plan(graph, "2", {"1": {**captured["1"], "outputs": {
+        6: json.dumps(_krea2_doc(upscale_to_stage2=2.0))}}}, "run"))
+    assert [(p.steps, p.start_step, p.end_step) for p in two.passes] == [(12, None, None), (16, 9, 16)]
+    again = GenerationRecord.from_dict(json.loads(json.dumps(stated.to_dict())))
+    assert again.recipe == stated.recipe
+
+    # --- a sweep: two cells, each with its own checkpoint / LoRA / prompt
+    folder = tempfile.mkdtemp(prefix="aaa_sweep_")
+    cells = []
+    for index, (ckpt, lora, steps) in enumerate((("Krea2\\a\\ckpt_a.safetensors", "ink.safetensors", 12),
+                                                  ("Krea2\\b\\ckpt_b.safetensors", "oil.safetensors", 8))):
+        ckpt, lora_path = ckpt.replace("\\\\", "\\"), "L:\\Models\\loras\\Krea2\\" + lora
+        doc = _krea2_doc(s1_steps=steps)
+        doc["loader"] = {"base_pipeline_path": "H:\\Training\\Krea-2-Turbo",
+                         "transformer_path": "A:\\Models\\diffusion_models\\" + ckpt,
+                         "text_encoder_path": "A:\\Models\\text_encoders\\qwen.safetensors", "vae_path": ""}
+        doc["lora"] = [{"path": lora_path, "filename": lora, "lora_name": "Krea2\\" + lora, "strength": 0.9,
+                        "weight_s1": 0.9, "weight_s2": 0.5, "weight_s3": 0.0}]
+        doc["sweep_prompt"] = f"trigger{index}, cell prompt {index}"
+        name = f"cell_{index:03d}.png"
+        info = PngInfo()
+        info.add_text("krea2_settings", json.dumps(doc, indent=2))
+        Image.new("RGB", (8, 8)).save(os.path.join(folder, name), pnginfo=info)
+        cells.append({"index": index, "file": name, "seed": 1000 + index, "metrics": {"sharpness_laplacian": 10.5 + index},
+                      "overrides": {"prompt": f"cell prompt {index}", "checkpoint": ckpt, "lora_stack": f"Krea2\\{lora} @0.9"},
+                      "loras": f"{lora[:-12]} @0.9", "resolved": dict(doc["ultra"])})
+    cells.insert(1, {"index": 7, "error": "out of memory", "overrides": {}})        # a failed cell: no picture
+    manifest_path = os.path.join(folder, "sweep_manifest_test.json")
+    with open(manifest_path, "w", encoding="utf-8") as handle:
+        json.dump({"sweep_manifest_version": 1, "sweep_id": "20260101_test", "base": _krea2_doc()["ultra"], "cells": cells}, handle)
+    sweep_doc = dict(_krea2_doc())
+    sweep_doc["sweep"] = {"sweep_id": "20260101_test", "manifest": manifest_path,
+                          "cells": [{"batch_index": 0, "cell_index": 0, "overrides": cells[0]["overrides"]},
+                                    {"batch_index": 1, "cell_index": 1, "overrides": cells[2]["overrides"]}]}
+    for label, outputs in (("settings string", {6: json.dumps(sweep_doc), 8: manifest_path}),
+                           ("cut-off string", {6: json.dumps(sweep_doc, indent=2)[:300], 8: manifest_path})):
+        sweep_capture = {"1": {**captured["1"], "outputs": outputs}}
+        base_record = build_record(graph, "2", sweep_capture, "run")
+        base_record.models.append(recipes.ModelRef(role="unet", name="panel.safetensors", sha256="ab" * 32))
+        base_record.warnings.append("2 base models were loaded in this run (sweep or model switch): a, b")
+        plan = recipes.find_plan(graph, "2", sweep_capture, "run")
+        assert plan is not None and plan.is_sweep and len(plan.cells) == 2, label
+        first, second = (recipes.apply_plan(base_record, plan, i, 2) for i in (0, 1))
+        assert first.positive == "trigger0, cell prompt 0" and first.positive_source == "cell prompt 0", label
+        assert second.positive == "trigger1, cell prompt 1"
+        assert [m.stem for m in first.base_models] == ["ckpt_a", "Krea-2-Turbo"] or \
+               [m.stem for m in first.by_role("unet")] == ["ckpt_a"], label
+        assert [m.stem for m in second.by_role("unet")] == ["ckpt_b"]
+        assert [(m.stem, m.strength_model, m.extra_strengths.get("weight_s2")) for m in second.loras] == [("oil", 0.9, 0.5)]
+        assert [m.stem for m in first.by_role("text_encoder")] == ["qwen"]
+        assert first.passes[0].seed == 1000 and second.passes[0].seed == 1001 and second.passes[0].steps == 8
+        assert not any("base models were loaded" in w for w in first.warnings)
+        bare = GenerationRecord(warnings=["no base model found", "positive prompt not found", "seed not resolved"])
+        assert recipes.apply_plan(bare, plan, 0, 2).warnings == []
+        assert second.recipe["sweep"]["cell_index"] == 1 and second.recipe["sweep"]["metrics"]["sharpness_laplacian"] == 11.5
+        assert "ckpt_b" in second.keywords() and "oil" in second.keywords() and "ckpt_a" not in second.keywords()
+        # disk paths leave the stored copy unless asked for
+        stored = record_for_embedding(second, include_paths=False)
+        assert stored["recipe"]["settings"]["loader"]["transformer_path"] == "ckpt_b.safetensors"
+        assert stored["recipe"]["settings"]["lora"][0]["lora_name"] == "Krea2\\oil.safetensors"
+        assert "L:" in record_for_embedding(second, include_paths=True)["recipe"]["settings"]["lora"][0]["path"]
+        report = text_report.build_report("x.png", second, None, None, False)
+        assert "RECIPE (krea2_settings" in report and "sweep.cell_index" in report and "ultra.s1_steps" in report
+        # the batch was changed on the way to the save: no guessing
+        unmatched = recipes.apply_plan(base_record, plan, 0, 5)
+        assert unmatched.positive == base_record.positive and any("could not be matched" in w for w in unmatched.warnings)
+
+    # cell pictures gone: the manifest still tells checkpoint, LoRAs, seed and settings
+    for name in ("cell_000.png", "cell_001.png"):
+        os.remove(os.path.join(folder, name))
+    plan = recipes.find_plan(graph, "2", {"1": {**captured["1"], "outputs": {6: json.dumps(sweep_doc), 8: manifest_path}}}, "run")
+    fallback = recipes.apply_plan(build_record(graph, "2", captured, "run"), plan, 1, 2)
+    assert [m.name for m in fallback.by_role("unet")] == ["Krea2\\b\\ckpt_b.safetensors"]
+    assert [(m.name, m.strength_model) for m in fallback.loras] == [("oil", 0.9)] and fallback.passes[0].steps == 8
+    assert fallback.positive == "cell prompt 1" and any("not readable" in w for w in fallback.warnings)
+    os.remove(manifest_path)
+    os.rmdir(folder)
+
+    # a node from another workflow that happens to share the id is not believed
+    stale = {"1": {"prompt_id": "old", "inputs": {"s1_steps": 99}, "outputs": {6: json.dumps(settings)}, "files": [], "published": {}}}
+    assert recipes.find_plan(graph, "2", stale, "run") is None
+
+
 if __name__ == "__main__":
     failed = 0
     for name, func in sorted(globals().items()):

@@ -162,6 +162,77 @@ def main() -> int:
                   f"bits={tags.get('PNG:BitDepth') or tags.get('IFD0:BitsPerSample')} headline={tags.get('XMP-photoshop:Headline')}")
             if not good:
                 print("   summary:", summary[:900])
+        # --- a Krea2 sweep: a batch of two cells, each image must carry the record of its own cell
+        try:
+            import json
+            from PIL import Image
+            from PIL.PngImagePlugin import PngInfo
+            from aaa_meta import reader, shared
+            sweep_dir = os.path.join(folder, "sweep")
+            os.makedirs(sweep_dir)
+            ultra = {"seed_mode": "same_all_stages", "s1_steps": 12, "s1_cfg": 0.1, "s1_sampler": "euler",
+                     "s1_schedule": "beta", "upscale_to_stage2": 0.0, "s2_steps": 16, "upscale_to_stage3": 0.0, "s3_steps": 20}
+            manifest_cells = []
+            for index, (ckpt, lora) in enumerate((("zq_ckpt_a.safetensors", "zq_ink.safetensors"),
+                                                  ("zq_ckpt_b.safetensors", "zq_oil.safetensors"))):
+                doc = {"krea2_settings_version": 1, "ultra": dict(ultra, s1_steps=12 - 4 * index),
+                       "loader": {"transformer_path": "A:\\Models\\diffusion_models\\" + ckpt},
+                       "lora": [{"lora_name": lora, "filename": lora, "strength": 0.8, "weight_s1": 0.8}],
+                       "sweep_prompt": f"zqtrigger{index}, zqcell prompt {index}"}
+                info = PngInfo()
+                info.add_text("krea2_settings", json.dumps(doc))
+                Image.new("RGB", (8, 8)).save(os.path.join(sweep_dir, f"cell_{index:03d}.png"), pnginfo=info)
+                manifest_cells.append({"index": index, "file": f"cell_{index:03d}.png", "seed": 500 + index,
+                                       "overrides": {"prompt": f"zqcell prompt {index}", "checkpoint": ckpt}})
+            manifest_path = os.path.join(sweep_dir, "sweep_manifest_check.json")
+            with open(manifest_path, "w", encoding="utf-8") as handle:
+                json.dump({"sweep_manifest_version": 1, "sweep_id": "zqsweep", "base": ultra, "cells": manifest_cells}, handle)
+            panel = {"prompt": "zqpanel prompt", "seed": 77, **{k: v for k, v in ultra.items() if k != "seed_mode"}}
+            sweep_prompt = {"20": {"class_type": "EricKrea2MultistageUltraV2", "inputs": panel},
+                            "21": {"class_type": "MetadataAwareSaveImage_v100", "inputs": {"images": ["20", 0]}}}
+            settings = {"krea2_settings_version": 1, "ultra": ultra,
+                        "sweep": {"sweep_id": "zqsweep", "manifest": manifest_path,
+                                  "cells": [{"batch_index": i, "cell_index": i, "overrides": c["overrides"]}
+                                            for i, c in enumerate(manifest_cells)]}}
+            state = shared.state()
+            with state.lock:
+                entry = shared.new_entry("EricKrea2MultistageUltraV2", None)
+                entry["inputs"] = dict(panel)
+                entry["outputs"] = {6: json.dumps(settings, indent=2), 8: manifest_path}
+                state.nodes["20"] = entry
+            target = os.path.join(folder, "case_sweep")
+            sweep_defaults = dict(defaults)
+            for name in list(sweep_defaults):
+                if name.startswith(("overlay_", "mask_")) or name == "include_mask_layers":
+                    sweep_defaults.pop(name)
+            sweep_defaults.update({"file_format": "png", "bit_depth": "8-bit", "color_profile": "sRGB v4 Appearance",
+                                   "additional_format": "None", "custom_output_directory": target})
+            output = node.save_with_metadata(gradient.repeat(2, 1, 1, 1), filename_prefix="nodecheck", prompt=sweep_prompt,
+                                             extra_pnginfo={"workflow": {"nodes": []}}, unique_id="21", **sweep_defaults)
+            saved = sorted(os.path.join(root, f) for root, _d, files in os.walk(target) for f in files if f.endswith(".png"))
+            seen = []
+            for path in saved:
+                parsed = reader.read_file(path)
+                record = parsed.get("record") or {}
+                unets = [m["name"] for m in record.get("models", []) if m.get("role") == "unet"]
+                loras = [m["name"] for m in record.get("models", []) if m.get("role") == "lora"]
+                seen.append((record.get("positive"), unets, loras, [p.get("steps") for p in record.get("passes", [])],
+                             record.get("passes", [{}])[0].get("seed"), (record.get("recipe") or {}).get("sweep", {}).get("cell_index"),
+                             sorted(k for k in (parsed.get("standard", {}).get("keywords") or []) if k.startswith("zq_"))))
+            expected = [("zqtrigger0, zqcell prompt 0", ["zq_ckpt_a.safetensors"], ["zq_ink.safetensors"], [12], 500, 0, ["zq_ckpt_a", "zq_ink"]),
+                        ("zqtrigger1, zqcell prompt 1", ["zq_ckpt_b.safetensors"], ["zq_oil.safetensors"], [8], 501, 1, ["zq_ckpt_b", "zq_oil"])]
+            good = seen == expected
+            text = open(os.path.splitext(saved[1])[0] + ".txt", encoding="utf-8").read() if len(saved) == 2 else ""
+            good = good and "RECIPE (krea2_settings" in text and "zq_ckpt_b" in text and "zq_ckpt_a" not in text
+            ok = ok and good
+            print(f"case sweep (2 cells -> 2 images, own record each): ok={good}")
+            if not good:
+                print("   read back:", seen, "\n   summary:", output["result"][2][:1200])
+            with state.lock:
+                state.nodes.pop("20", None)
+        except Exception:
+            ok = False
+            print(f"case sweep: EXCEPTION\n{traceback.format_exc()[-1800:]}")
     previews = os.path.join(COMFY, "output", "node_previews")       # the node writes UI previews here
     if os.path.isdir(previews):
         for name in os.listdir(previews):

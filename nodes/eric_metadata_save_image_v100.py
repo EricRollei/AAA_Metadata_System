@@ -33,7 +33,8 @@ from ..aaa_meta import color, embed, psd_writer
 from ..aaa_meta.layers import build_layers, layer_summary, to_float_array
 from ..aaa_meta.legacy_bridge import ServiceBridge, map_color_profile, user_fields_from_widgets
 from ..aaa_meta.pixels import save_tiff16
-from ..aaa_meta.runtime import measurements_for_node, record_for_node
+from ..aaa_meta.runtime import (measurements_for_node, recipe_plan_for_node, record_for_frame,
+                                record_for_node)
 
 _DISPLAY_P3 = "Display P3"
 _LAYER_INPUTS = ("mask_layer_1", "mask_layer_2", "overlay_layer_1", "overlay_layer_2")
@@ -148,6 +149,27 @@ class MetadataAwareSaveImageV100(_SaveImageV099d):
                 self._v100_notes.append(f"measurement collection failed: {exc!r}")
         self.metadata_service.begin(record, user_fields_from_widgets(kwargs), include_model_paths, embed_a1111,
                                     measurements)
+        # what the generator node itself stated (Krea2 settings, sweep cells): one record per image
+        plan, frame_records = None, {}
+        if record is not None:
+            try:
+                plan = recipe_plan_for_node(unique_id, prompt, dynprompt)
+            except Exception as exc:
+                self._v100_notes.append(f"recipe collection failed: {exc!r}")
+        if plan is not None:
+            frame_count = int(images.shape[0]) if torch.is_tensor(images) and images.ndim == 4 else 1
+
+            def frame_record(index, _base=record):
+                if index not in frame_records:
+                    frame_records[index] = record_for_frame(_base, plan, index, frame_count, hash_models)
+                return frame_records[index]
+            self.metadata_service.record_for_frame = frame_record
+            try:
+                record = frame_record(0)                    # shown in the summary output
+                self.metadata_service.record = record
+            except Exception as exc:
+                self.metadata_service.record_for_frame = None
+                self._v100_notes.append(f"recipe not applied: {exc!r}")
 
         # 2. real colour conversion (the base class then attaches the matching profile)
         self._v100_main_profile = map_color_profile(kwargs.get("color_profile", ""))
@@ -180,6 +202,9 @@ class MetadataAwareSaveImageV100(_SaveImageV099d):
         lines.extend(f"note: {note}" for note in self._v100_notes)
         if measurements:
             lines.append("measurements stored: " + ", ".join(measurements.keys()))
+        if plan is not None and plan.is_sweep and len(frame_records) > 1:
+            lines.append(f"sweep {plan.sweep_id}: each of the {len(frame_records)} images carries the record of its own cell "
+                         f"(the record below is image 1)")
         if record is not None:
             lines.append("")
             lines.append(record.summary())
@@ -231,6 +256,7 @@ class MetadataAwareSaveImageV100(_SaveImageV099d):
 
     def generate_sequential_filename(self, *args, **kwargs):
         self._v100_frame_index += 1                      # one call per saved frame
+        self.metadata_service.frame_index = max(self._v100_frame_index, 0)
         return super().generate_sequential_filename(*args, **kwargs)
 
     def _save_as_psd(self, image, image_path, metadata=None, prompt=None, extra_pnginfo=None, **kwargs):

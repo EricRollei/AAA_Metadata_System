@@ -39,11 +39,33 @@ def main() -> int:
     import torch
     buffer = io.StringIO()
     with contextlib.redirect_stdout(buffer):
-        pack = importlib.import_module(f"custom_nodes.{os.path.basename(PACK)}")
+        # exactly ComfyUI's way (nodes.load_custom_node): the module is named after its disk path
+        import importlib.util
+        real_name = PACK.replace(".", "_x_")
+        spec = importlib.util.spec_from_file_location(real_name, os.path.join(PACK, "__init__.py"))
+        pack = importlib.util.module_from_spec(spec)
+        sys.modules[real_name] = pack
+        spec.loader.exec_module(pack)
     startup = buffer.getvalue().splitlines()
+    # one copy only: the names old nodes import the pack by must be this very module
+    by_alias = importlib.import_module("custom_nodes.AAA_Metadata_System")
+    plain = importlib.import_module("AAA_Metadata_System")
+    deep = importlib.import_module("custom_nodes.AAA_Metadata_System.eric_metadata.utils.workflow_parser")
+    copies = {}
+    for name, module in list(sys.modules.items()):
+        file = getattr(module, "__file__", None) or ""
+        if module is not None and file.startswith(PACK) and "tests_v2" not in file:
+            copies.setdefault(file, set()).add(id(module))
+    twice = sorted(os.path.relpath(file, PACK) for file, ids in copies.items() if len(ids) > 1)
+    loaded_lines = [line for line in startup if "nodes loaded" in line]
+    single = (by_alias is pack and plain is pack and not twice and len(loaded_lines) == 1
+              and deep is sys.modules.get(real_name + ".eric_metadata.utils.workflow_parser"))
+    print(f"single load: ok={single} (alias names point at the loaded pack={by_alias is pack and plain is pack}, "
+          f"modules loaded twice={twice[:6]}, 'nodes loaded' printed {len(loaded_lines)}x, "
+          f"{len(copies)} pack modules, version {pack.__version__})")
     errors = [line for line in startup if "Error loading node module" in line or "not applied" in line
               or "not installed" in line]
-    ok = not errors
+    ok = not errors and single
     print(f"start-up: {len(startup)} console lines, {len(pack.NODE_CLASS_MAPPINGS)} nodes, load errors: {len(errors)}")
     for line in errors:
         print("   ", line[:300])

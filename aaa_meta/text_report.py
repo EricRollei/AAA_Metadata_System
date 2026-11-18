@@ -125,6 +125,17 @@ def build_report(image_path: str, record: Optional[GenerationRecord], user: Opti
             sampling.append(_line("Model patch", f"{patch.get('class_type')}{' (' + params + ')' if params else ''}"))
         section("SAMPLING", sampling)
 
+    if record is not None and record.recipe:
+        from .recipes import recipe_for_embedding
+        recipe = recipe_for_embedding(record.recipe, include_paths)
+        settings = dict(recipe.get("settings") or {})
+        settings.pop("sweep_prompt", None)                   # shown above as the prompt
+        sweep = dict(recipe.get("sweep") or {})
+        if isinstance(sweep.get("overrides"), dict):
+            sweep["overrides"] = {k: v for k, v in sweep["overrides"].items() if k != "prompt"}
+        title = f"RECIPE ({recipe.get('kind', 'settings')} as stated by {recipe.get('node', 'the generator node')})"
+        section(title, (_flatten({"sweep": sweep}) if sweep else []) + _flatten(settings))
+
     section("MEASUREMENTS", _flatten(analysis) if analysis else [])
 
     if record is not None:

@@ -1,8 +1,8 @@
 [project]
 name = "aaa-metadata-system"
-description = "Advanced metadata management and multi-format image save/load system for ComfyUI including SVG, TIFF, and PSD with layer support."
+description = "Save images with generation metadata collected automatically and stored where Lightroom, XnView MP and Capture One can search it. PNG, JPG, WebP, TIFF, PSD and SVG, 16-bit, colour profiles, Photoshop layers, quality measurements."
 readme = "README.md"
-version = "0.1.0"
+version = "0.2.0"
 license = { file = "LICENSE" }
 requires-python = ">=3.8"
 authors = [
@@ -11,7 +11,7 @@ authors = [
 maintainers = [
     { name = "Eric Hiss", email = "eric@rollei.us" }
 ]
-keywords = ["comfyui", "metadata", "psd", "svg", "tiff", "xmp", "exif", "image-processing"]
+keywords = ["comfyui", "metadata", "xmp", "lightroom", "save image", "psd", "tiff", "svg", "layers", "color profile", "civitai"]
 classifiers = [
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",

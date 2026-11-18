@@ -14,9 +14,17 @@ except ImportError:
 if "NUMEXPR_MAX_THREADS" not in os.environ:
     os.environ["NUMEXPR_MAX_THREADS"] = "8"
 
-# Make this package importable as both its folder name and as 'AAA_Metadata_System'
-# This allows: from AAA_Metadata_System import MetadataService
-sys.modules['AAA_Metadata_System'] = sys.modules.get(__name__, sys.modules[__name__])
+# One copy of the pack under every name it is imported by: the name ComfyUI gives it,
+# 'AAA_Metadata_System' and 'custom_nodes.AAA_Metadata_System' (see aaa_meta/pack_alias.py).
+# This allows: from AAA_Metadata_System import MetadataService - also when the folder has
+# another name - and stops the pack from starting a second time.
+try:
+    from .aaa_meta.pack_alias import install as _install_pack_alias
+    if not _install_pack_alias(__name__) and os.environ.get("AAA_META_VERBOSE", "").strip().lower() in ("1", "true", "yes", "on"):
+        print(f"[AAA Metadata] already loaded under another name; loading again as {__name__}")
+except Exception as _alias_error:
+    print(f"[AAA Metadata] import aliases not installed: {_alias_error!r}")
+    sys.modules.setdefault('AAA_Metadata_System', sys.modules[__name__])
 
 # Export core functionality for easy access
 from .eric_metadata.service import MetadataService
@@ -31,7 +39,6 @@ from .eric_metadata.handlers.xmp import XMPSidecarHandler
 from .eric_metadata.handlers.embedded import EmbeddedMetadataHandler
 from .eric_metadata.handlers.txt import TxtFileHandler
 from .eric_metadata.handlers.db import DatabaseHandler
-from .eric_metadata.hooks.runtime_capture import auto_enable_from_env
 
 # Initialize node mappings
 NODE_CLASS_MAPPINGS = {}
@@ -93,9 +100,6 @@ INSTALL_LEGACY_WEB_COPY = False
 if INSTALL_LEGACY_WEB_COPY:
     install_web_extensions()
 
-# Enable runtime hooks if the environment flag requests it (defaults to off).
-auto_enable_from_env()
-
 # v2 capture core (aaa_meta): runtime hooks for automatic metadata collection.
 # Disable with environment variable AAA_META_CAPTURE=0.
 try:
@@ -129,7 +133,7 @@ for file in os.listdir(nodes_dir):
         print(f"Error loading node module {name}: {str(e)}")
 
 # Version info
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 # Add web directory for UI components if needed
 # v2: one menu tree for the whole pack, "Eric's Nodes/..." (AAA_META_KEEP_OLD_CATEGORIES=1 disables)

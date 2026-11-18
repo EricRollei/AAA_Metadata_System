@@ -141,6 +141,11 @@ def record_for_embedding(record: GenerationRecord, include_paths: bool = False) 
             sampling.pop("extras", None)
     for item in data.get("model_chain", []):
         item.pop("node_id", None)
+    if data.get("recipe"):
+        from .recipes import recipe_for_embedding
+        data["recipe"] = recipe_for_embedding(data["recipe"], include_paths)
+    else:
+        data.pop("recipe", None)
     return data
 
 

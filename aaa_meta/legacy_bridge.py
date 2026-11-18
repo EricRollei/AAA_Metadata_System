@@ -106,6 +106,8 @@ class ServiceBridge:
         self.enabled = True
         self.measurements: Dict[str, Any] = {}
         self.results: List[Dict[str, Any]] = []
+        self.frame_index = 0                                # set by the node: which image of the batch
+        self.record_for_frame = None                        # optional: frame index -> record of that image
 
     def __getattr__(self, name: str) -> Any:        # everything else behaves as before
         return getattr(self._legacy, name)
@@ -115,6 +117,7 @@ class ServiceBridge:
         self.record, self.user, self.include_paths, self.a1111 = record, user, include_paths, a1111
         self.measurements = dict(measurements or {})
         self.results = []
+        self.frame_index, self.record_for_frame = 0, None
 
     def write_metadata(self, filepath: str, metadata: Optional[Dict[str, Any]] = None,
                        targets: Optional[List[str]] = None, **kwargs) -> Dict[str, bool]:
@@ -125,6 +128,12 @@ class ServiceBridge:
             analysis = {**self.measurements, **(analysis or {})}
         extension = os.path.splitext(filepath)[1].lower()
         status: Dict[str, bool] = {target: True for target in targets}
+        if self.record_for_frame is not None and self.record is not None:
+            try:                                            # sweeps: every image has its own record
+                self.record = self.record_for_frame(self.frame_index) or self.record
+            except Exception as exc:
+                self.results.append({"path": filepath, "embedded": True,
+                                     "warnings": [f"per-image recipe not applied: {exc!r}"]})
         if not os.path.isfile(filepath):                    # the image itself was not saved
             self.results.append({"path": filepath, "embedded": False, "warnings": ["image file was not written"]})
             return {target: False for target in targets}

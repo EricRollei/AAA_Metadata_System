@@ -75,6 +75,8 @@ class GenerationRecord:
     comfyui_version: Optional[str] = None
     created: Optional[str] = None
     warnings: List[str] = field(default_factory=list)
+    # what the generator node itself stated (see recipes.py): {"kind", "node", "settings", "sweep"?}
+    recipe: Dict[str, Any] = field(default_factory=dict)
 
     # ---- convenience views ---------------------------------------------
     def by_role(self, *roles: str) -> List[ModelRef]:
@@ -155,6 +157,10 @@ class GenerationRecord:
         for item in self.model_chain:
             params = ", ".join(f"{k}={v}" for k, v in item.get("params", {}).items())
             lines.append(f"model patch: {item.get('class_type')}{' (' + params + ')' if params else ''}")
+        if self.recipe:
+            sweep = self.recipe.get("sweep") or {}
+            where = f", sweep {sweep.get('sweep_id', '')} cell {sweep['cell_index']}" if "cell_index" in sweep else ""
+            lines.append(f"recipe: {self.recipe.get('kind', 'settings')} stated by {self.recipe.get('node', '?')}{where}")
         for warning in self.warnings:
             lines.append(f"warning: {warning}")
         return "\n".join(lines)

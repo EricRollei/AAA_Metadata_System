@@ -493,3 +493,68 @@ nodes are left alone.
   superseded): duplicate finder v05 vs fast finder, Multi-LoRA v02 vs Model-Only.
 - Checks: unit tests 23; new `tests_v2/check_pack_load.py` (whole pack loads, 81 nodes, 0 load errors, category
   tree, SVG v2, Qwen layers v2, extractors) PACK OK; NODE OK; COMPANIONS OK.
+
+
+---
+
+## Update 2026-11-18 - recipes (Krea2 Ultra, sweeps), single load, version 0.2.0
+
+### Recipes: what the generator node itself states
+- New `aaa_meta/recipes.py`. A node output that is a JSON object with a `*_settings_version` key (Eric_Krea2:
+  `krea2_settings_version`) is taken as the node's own statement of what it used. Nothing in Eric_Krea2 was changed:
+  Ultra V2 already returns `settings` and `sweep_manifest`, and the capture hook already keeps them.
+- The statement is stored as `recipe` in the generation record (so inside `hcai:RecordJSON`) and printed as a
+  RECIPE section in the .txt. Disk paths inside it are cut to file names unless `include_model_paths` is on.
+- Krea2 Ultra, normal run: passes are now taken from the statement, so a stage that did not run
+  (`upscale_to_stage2` / `upscale_to_stage3` = 0) is no longer listed. Before, all three stages were listed
+  whenever their step widgets were above zero.
+- Krea2 Ultra, sweep: batch image i is matched to its cell (the node's own `sweep.cells` list, or - when that
+  string is too long to keep, which happens from roughly 60 cells up - the saved cells of the manifest in order,
+  the same rule the node uses). The exact cell recipe is read from the cell picture's `krea2_settings` text chunk.
+  Each saved image then carries its own cell's checkpoint, LoRAs with per-stage weights, prompt with trigger
+  words (typed prompt kept as source prompt), seed and stage settings; keywords follow. Fallbacks, each with a
+  note in the record: cell picture missing -> manifest values; manifest missing -> listed overrides.
+- No guessing: when the number of images reaching the save differs from the number of cells (something
+  selected or reordered images in between), the panel values are stored with a warning that says so.
+- A cached Ultra node (ComfyUI reused its result) is still believed, but only when its captured inputs match
+  the current widgets - the rule the capture core already used.
+- `ServiceBridge` takes one record per frame; `Generation Record (debug) v1` shows the recipe too.
+
+### Verified / not verified
+- Unit test with the real structures (settings string, cut-off string, manifest, cell pictures, fallbacks).
+- Node check: a two-cell sweep saved through Metadata Save Image v1.0, both PNGs read back with their own
+  checkpoint / LoRA / prompt / seed / keywords, RECIPE section in the .txt.
+- Against the real 252-cell sweep on disk (20261117_180425_custom_2ckpts, manifest 2.6 MB): cells 0, 1, 125, 251
+  resolve to the right checkpoint (second checkpoint from cell 126 on), LoRA stack and prompt; one pass only,
+  since stage 2 was off in that sweep.
+- NOT verified: a live ComfyUI run. Output positions 6 (`settings`) and 8 (`sweep_manifest`) are found by
+  content, not by position, so a changed output order does not matter.
+
+### Cleanup
+- **Single load.** Cause of the double start-up: ComfyUI names the pack after its disk path; v099d and other
+  old nodes import `custom_nodes.AAA_Metadata_System`, which Python treated as a second package and ran the
+  whole `__init__` again. `aaa_meta/pack_alias.py` maps `AAA_Metadata_System` and
+  `custom_nodes.AAA_Metadata_System` (and every module below them) onto the loaded pack.
+  `check_pack_load.py` now loads the pack exactly as ComfyUI does and checks: 140 pack modules, none loaded
+  twice, "nodes loaded" printed once.
+  Side effect worth knowing: those imports no longer depend on the folder name. The registry installs the
+  pack as `aaa-metadata-system` (ComfyUI-Manager uses the registry id as folder name); there
+  `custom_nodes.AAA_Metadata_System` does not exist, so v099d should have failed to load from a registry
+  install of 0.1.0. Not confirmed on a registry install - worth one test after publishing.
+- **metadata.db**: already ignored, not tracked, and never in the history of any branch. Nothing to do.
+  The file still sits in the pack folder (the old database handler creates it there).
+- **Old hook module**: `eric_metadata/hooks/runtime_capture.py` (327 lines, wrapped the executor) replaced
+  by a 50-line placeholder with the same names that does nothing. A plain delete was not possible: v099d and
+  "save image simple" import it at module level, and v1.0 is built on v099d. `auto_enable_from_env()` call
+  removed from `__init__`. v099d's `enable_runtime_hooks` widget stays (widget order) and now has no effect.
+- **Version 0.2.0** in `pyproject.toml`, `__init__.py`, `eric_metadata/__init__.py`, `version.txt`, `setup.py`;
+  CHANGELOG section `[0.2.0] - 2026-11-18`. The registry currently lists 0.1.0.
+  `pyproject.toml`: new description and keywords. `requirements.txt`: `tifffile` added (was only in pyproject).
+- Publishing: `.github/workflows/publish.yml` publishes when `pyproject.toml` changes on `main`. This work
+  is on `overhaul-v2`; nothing was merged or pushed.
+
+### Open
+- Subgraph case (ids like `459:...`, empty prompt) still not reproduced; both dumps received are top-level.
+- `requires-python = ">=3.8"` and `requires-comfyui = ">=0.3.0"` in pyproject are untested claims.
+- `setup.py` is a leftover (name `comfyui-nodes`, placeholder e-mail); only its version was changed.
+

@@ -156,3 +156,31 @@ def measurements_for_node(unique_id: Any, prompt: Optional[dict] = None, dynprom
     with state.lock:
         captured = {node_id: dict(entry) for node_id, entry in state.nodes.items()}
     return collect_measurements(graph, str(unique_id), captured, prompt_id, _class_info)
+
+
+def recipe_plan_for_node(unique_id: Any, prompt: Optional[dict] = None, dynprompt: Any = None):
+    """What the nearest recipe-stating generator upstream of this node said (recipes.RecipePlan) or None."""
+    from .recipes import find_plan
+    graph = PromptGraph.from_dynprompt(dynprompt, prompt) if dynprompt is not None else PromptGraph.from_prompt(prompt or {})
+    prompt_id = None
+    try:
+        from comfy_execution.utils import get_executing_context
+        context = get_executing_context()
+        if context is not None:
+            prompt_id = context.prompt_id
+    except Exception:
+        pass
+    state = shared.state()
+    with state.lock:
+        captured = {node_id: dict(entry) for node_id, entry in state.nodes.items()}
+    return find_plan(graph, str(unique_id), captured, prompt_id)
+
+
+def record_for_frame(record: GenerationRecord, plan: Any, frame_index: int, frame_count: int,
+                     hash_models: str = "cached") -> GenerationRecord:
+    """The record of one image of the saved batch: recipe attached, sweep cell applied."""
+    from .recipes import apply_plan
+    result = apply_plan(record, plan, frame_index, frame_count)
+    if result is not record:
+        _resolve_paths_and_hashes(result, hash_models)
+    return result
