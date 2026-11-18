@@ -66,6 +66,103 @@ def _convert_tensor(images, profile: str):
     return torch.from_numpy(np.ascontiguousarray(converted.astype(np.float32)))
 
 
+_BLEND = "normal, multiply, screen, overlay, add, subtract, difference, darken, lighten, color dodge, color burn"
+_TOOLTIPS = {
+    # --- file
+    "images": "The images to save. A batch is saved as numbered files (or as the frames of one APNG).",
+    "filename_prefix": "Base name of the saved files. Date tokens such as %date:yyyy-MM-dd% are replaced.",
+    "file_format": "png, jpg, webp, tiff, psd, apng (animated PNG from the batch) or svg (traced vector graphic, "
+                   "needs vtracer). Layers are kept as layers in psd and tiff.",
+    "include_project": "Put the project name (from the 'project' field below) into the file name.",
+    "include_datetime": "Put date and time into the file name.",
+    "custom_output_directory": "Where to save. Empty = ComfyUI's output folder. A relative path such as "
+                               "images/portraits (no leading slash) or, with output_path_mode 'Absolute Path', a "
+                               "full path. Date tokens such as %date:yyyy-MM-dd% are replaced.",
+    "output_path_mode": "How custom_output_directory is read: as a sub-folder of ComfyUI's output folder, or as "
+                        "an absolute path anywhere on disk.",
+    "filename_format": "Numbering of files: padded with zeros, or simple (file1.png).",
+    "quality_preset": "Quality against file size: Best Quality, Balanced or Smallest File.",
+    # --- layers
+    "mask_layer_1": "Optional mask image. Saved in psd and tiff as a hidden layer '<name> (Masked Image)': the "
+                    "main picture with this mask as its transparency - ready to switch on in Photoshop.",
+    "mask_1_name": "Layer name shown in Photoshop.",
+    "mask_1_blend_mode": "Photoshop blend mode of this layer: " + _BLEND + ".",
+    "mask_1_opacity": "Layer opacity, 0 (invisible) to 255 (opaque).",
+    "mask_layer_2": "Optional second mask image, saved like mask layer 1 (psd, tiff).",
+    "mask_2_name": "Layer name shown in Photoshop.",
+    "mask_2_blend_mode": "Photoshop blend mode of this layer: " + _BLEND + ".",
+    "mask_2_opacity": "Layer opacity, 0 (invisible) to 255 (opaque).",
+    "include_mask_layers": "Also save each mask itself as a visible layer (psd, tiff), in addition to the "
+                           "hidden '(Masked Image)' layers.",
+    "overlay_layer_1": "Optional image saved as its own layer above the main image in psd and tiff - for "
+                       "example a glow, a texture or a retouch pass.",
+    "overlay_1_name": "Layer name shown in Photoshop.",
+    "overlay_1_blend_mode": "Photoshop blend mode of this layer: " + _BLEND + ".",
+    "overlay_1_opacity": "Layer opacity, 0 (invisible) to 255 (opaque).",
+    "overlay_layer_2": "Optional second overlay layer (psd, tiff).",
+    "overlay_2_name": "Layer name shown in Photoshop.",
+    "overlay_2_blend_mode": "Photoshop blend mode of this layer: " + _BLEND + ".",
+    "overlay_2_opacity": "Layer opacity, 0 (invisible) to 255 (opaque).",
+    # --- colour, depth, alpha
+    "color_profile": "Colour space of the saved file: sRGB (three v4 variants), Adobe RGB, ProPhoto RGB, Display "
+                     "P3, or None. The ICC profile is embedded; with convert_to_color_profile on (default) the "
+                     "pixels are converted into that colour space as well.",
+    "rendering_intent": "How out-of-range colours are mapped when converting to the colour profile. Relative "
+                        "Colorimetric suits most pictures; Perceptual keeps gradations in very saturated ones.",
+    "bit_depth": "8-bit (standard) or 16-bit (high precision). True 16-bit for png, tiff and psd; jpg, webp, "
+                 "apng and svg are always 8-bit.",
+    "alpha_mode": "Transparency: auto = best choice for the format; straight / premultiplied = how colour and "
+                  "alpha are stored; matte = flatten onto matte_color (formats without transparency, e.g. jpg).",
+    "matte_color": "Background colour for alpha_mode 'matte'. Colour name or hex value such as #FFFFFF.",
+    "save_alpha_separately": "Also save the alpha channel as a separate greyscale image - for formats that "
+                             "cannot hold transparency.",
+    "apng_fps": "Animated PNG: frames per second.",
+    "apng_loops": "Animated PNG: how often it repeats (0 = forever).",
+    # --- second copy
+    "additional_format": "Save a second copy of every image in another format - e.g. a 16-bit tiff master plus "
+                         "a jpg for the web. The copy carries the same metadata.",
+    "additional_format_quality": "Compression of the second copy.",
+    "additional_format_suffix": "Text added to the file name of the second copy (image_web.jpg).",
+    "additional_format_embed_workflow": "Embed the ComfyUI workflow in the second copy (png only).",
+    "additional_format_color_profile": "Colour profile of the second copy - e.g. sRGB for the web copy of a "
+                                       "ProPhoto master.",
+    # --- svg
+    "svg_colormode": "SVG only: trace in colour or in black and white.",
+    "svg_hierarchical": "SVG only: stacked = shapes lie on top of each other (smaller files, no gaps); cutout = "
+                        "shapes are cut out of each other.",
+    "svg_mode": "SVG only: outline as smooth curves (spline), straight segments (polygon) or pixel-exact (none).",
+    # --- metadata
+    "enable_metadata": "Master switch. Off = the picture is saved without any metadata, sidecar or text file.",
+    "title": "Title (XMP dc:title - the 'Title' field in Lightroom, XnView and Capture One).",
+    "project": "Project name. Stored with the image, usable in the file name (include_project) and as a "
+               "keyword for searching.",
+    "description": "Your own description. It is placed before the prompt in the caption / description field "
+                   "that photo software shows and searches.",
+    "creator": "Creator / artist name (XMP dc:creator).",
+    "copyright": "Copyright notice (XMP dc:rights).",
+    "keywords": "Your keywords, separated by commas. Models, LoRAs and the sampler are added as keywords "
+                "automatically.",
+    "custom_metadata": "Extra fields of your own as JSON, e.g. {\"client\": \"Acme\", \"shoot\": 12}. Stored "
+                       "with the image (hcai:Custom).",
+    "auto_extract_generation_params": "Collect prompts, models, LoRAs, sampler settings and seeds automatically "
+                                      "while the workflow runs - no wiring needed.",
+    "include_node_details": "Also store technical node information (ids, connections) - for debugging.",
+    "save_embedded": "Write the metadata into the image file itself, where Lightroom, XnView and Capture One "
+                     "read it. Needs ExifTool; the 'summary' output says if nothing could be embedded.",
+    "save_workflow_as_json": "Also save the workflow as a .json file next to the image (works for every format).",
+    "save_xmp": "Also write an .xmp sidecar file with the same metadata.",
+    "save_txt": "Also write a readable .txt report: prompt, models, sampling, measurements, recipe.",
+    "save_db": "Also record the image in the pack's SQLite database (metadata.db).",
+    "save_individual_discovery": "Save the per-run discovery files (JSON and HTML) of the older workflow "
+                                 "analysis as well.",
+    "debug_logging": "Print detailed progress to the console.",
+    "enable_runtime_hooks": "No longer used: generation data is always collected while the workflow runs. Kept "
+                            "so existing workflows keep their widget positions.",
+    "embed_workflow": "Embed the ComfyUI workflow in the PNG so the file can be dragged back into ComfyUI. For "
+                      "other formats use save_workflow_as_json.",
+}
+
+
 class MetadataAwareSaveImageV100(_SaveImageV099d):
     @classmethod
     def INPUT_TYPES(cls):
@@ -95,20 +192,17 @@ class MetadataAwareSaveImageV100(_SaveImageV099d):
             "tooltip": "Store results of analysis nodes (Eric-image-classification: UniPercept, blur, IQA...) that "
                        "worked on this image in this run. No wiring needed; the image just has to pass through "
                        "them, or they read it from a node that feeds this save."})
-        # tooltips that no longer describe what happens (same widgets, same positions)
-        for name, text in (
-                ("bit_depth", "8-bit (standard) or 16-bit (high precision). True 16-bit for PNG, TIFF and PSD; "
-                              "JPG, WebP, APNG and SVG are always 8-bit."),
-                ("enable_runtime_hooks", "No longer used: generation data is always collected while the workflow "
-                                         "runs. Kept so existing workflows keep their widget positions."),
-                ("auto_extract_generation_params", "Collect prompts, models, LoRAs, sampler settings and seeds "
-                                                   "automatically while the workflow runs - no wiring needed."),
-                ("color_profile", "Colour profile to embed. With convert_to_color_profile on, the pixels are "
-                                  "converted into this colour space as well."),
-                ("embed_workflow", "Embed the ComfyUI workflow in the PNG so the file can be dragged back into "
-                                   "ComfyUI. For other formats use save_workflow_as_json.")):
-            if name in optional and isinstance(optional[name], tuple) and len(optional[name]) > 1:
+        # tooltips: what each widget does now (same widgets, same positions - only the help text changes)
+        for name, text in _TOOLTIPS.items():
+            if name in optional and isinstance(optional[name], tuple) and len(optional[name]) > 1 \
+                    and isinstance(optional[name][1], dict):
                 optional[name] = (optional[name][0], {**optional[name][1], "tooltip": text})
+        required = dict(types.get("required", {}))
+        for name, text in _TOOLTIPS.items():
+            if name in required and isinstance(required[name], tuple) and len(required[name]) > 1 \
+                    and isinstance(required[name][1], dict):
+                required[name] = (required[name][0], {**required[name][1], "tooltip": text})
+        types["required"] = required
         types["optional"] = optional
         hidden = dict(types.get("hidden", {}))
         hidden["dynprompt"] = "DYNPROMPT"

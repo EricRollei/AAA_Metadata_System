@@ -613,3 +613,22 @@ nodes are left alone.
   and partly describe the pre-2.0 system.
 - Publishing note: without ExifTool the save node embeds nothing (image, sidecar and .txt are still written).
   A native fallback for PNG / JPG / WebP would remove that dependency for most users - not built.
+
+
+---
+
+## Update 2026-11-18 (e) - README rewritten below the save-node section, all save-node tooltips
+
+- README: the pre-2.0 sections (Key Highlights, Overview, Features, API examples, architecture diagram,
+  metadata-structure tree) are replaced by: what else is in the pack (menu table), installation in three steps
+  with ExifTool per operating system and what happens without it, compatibility table, what is stored (fields
+  and namespaces), nodes in more detail, settings (environment variables), for developers (two layers, read /
+  write examples with the real import paths, how another node's settings get picked up).
+  Removed: links to files that never existed (INSTALLATION.md, USAGE_GUIDE.md, ARCHITECTURE.md,
+  METADATA_STRUCTURE.md, INTEGRATION_GUIDE.md, API_REFERENCE.md, docs/..., the screenshot), the
+  `from Metadata_system import` examples, and claims not verified in the current code (PSD layer groups,
+  MWG-RS regions, JPEG "4-stage fallback"). All remaining links point at existing files.
+- Compatibility table says "checked in Lightroom Classic and Photoshop"; XnView MP and Capture One are
+  described as reading the same standard fields - adjust once tested there.
+- Save node: tooltips for every widget (`_TOOLTIPS` table in `eric_metadata_save_image_v100.py`), replacing
+  v099d's texts through INPUT_TYPES. Widgets and their order are untouched.

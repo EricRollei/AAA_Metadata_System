@@ -75,485 +75,228 @@ Type a LoRA name into Lightroom's keyword filter and get every image made with i
 
 `tools/backfill_library.py` makes the PNGs you already have searchable from their embedded workflow (dry run by default).
 
-## 🎯 Key Highlights
+## What else is in the pack
 
-### 🎨 Professional Format Support
-- **Adobe Photoshop PSD** - Load and save with full layer preservation, blend modes, and layer groups
-- **True Vector SVG** - Native SVG export with embedded metadata and scalability
-- **ICC Color Profile Management** - Embed and preserve color profiles (sRGB, Adobe RGB, ProPhoto RGB, etc.)
-- **Adobe-Compatible Metadata** - XMP sidecar files formatted for Photoshop, Lightroom, Bridge, and other cataloging software
-- **MWG-RS Compliant Regions** - Face/area metadata with coordinates compatible with Adobe's region standard
+82 nodes under one menu tree, *Eric's Nodes / ...*. Every node can be found in the node search by what it does (for example `duplicates`, `lora stack`, `word cloud`, `aspect ratio`).
 
-### 📁 Multi-Format Image Support
-- **PNG** - Full metadata embedding with workflow preservation
-- **JPEG** - Smart 4-stage fallback for EXIF size limits
-- **TIFF** - 16-bit support with layers and metadata
-- **WebP** - Modern format with full metadata
-- **PSD** - Complete Photoshop file support with layers, blend modes, and groups
-
-### 📋 Comprehensive Metadata Management
-- **XMP Sidecar Files** - Industry-standard structured metadata for Adobe applications
-- **TXT Summaries** - Human-readable metadata descriptions
-- **JSON Export** - Complete metadata for custom workflows
-- **Embedded EXIF/XMP** - In-image metadata for portability
-- **SQLite Database** - Optional centralized metadata storage
-
-## Overview
-
-This metadata system provides professional-grade image and metadata management for ComfyUI workflows, with deep integration for Adobe software ecosystems and color-managed workflows.
-
-## 🌟 Features
-
-- **Multi-format Support**: Store metadata in multiple locations simultaneously for maximum compatibility with various software and workflows
-- **Smart Merging**: Intelligently merge metadata from different sources with conflict resolution and prioritization
-- **Extensible Structure**: Well-organized metadata structure with sections for different types of information, easily extended with custom fields
-- **ComfyUI Integration**: Seamlessly integrates with ComfyUI nodes for workflow capture and parameter extraction
-- **Human-readable Output**: Optional human-readable text format with context-aware descriptions for easy viewing
-- **MWG Standard Compliance**: Follows Metadata Working Group standards for compatibility with professional software
-- **Workflow Data Preservation**: Captures generation parameters and workflow structure for reproducibility
-- **Advanced Querying**: Complex metadata filtering and searching with multiple query methods
-- **Error Recovery**: Sophisticated error handling and recovery strategies to prevent data loss
-- **Thread Safety**: Lock-based concurrency protection for multi-threaded applications
+| Menu | Nodes |
+|---|---|
+| **Output** | AAA Save Image All · Save True SVG Image v2 · Save Qwen Layers v2 · Save Image with Metadata (Simple) |
+| **Input** | Load Image Extended v2 (16-bit, PSD, TIFF, stored prompt and record as outputs) · Load Image with Layers v2 |
+| **Metadata** | Metadata Entry V3 · Query V4 · Filter V3 · Enhanced Filter V3 · Debugger V3 · Consolidator V3 · Add Measurements to Image v1 · Generation Record (debug) v1 · PNG Metadata Extractor V4 · Split Workflow Extractor V3 · Civitai Prompt Extractor v2 (+ Auto LoRA Loader) |
+| **Loaders** | Multi-LoRA Loaders (Flux, Qwen, Wan t2v / i2v, Z-Image, model-only, filtered) · LoRA Tester suite (12 nodes: notes, ratings, trigger words, gallery, database) · Checkpoint Tester suite (5 nodes) |
+| **Files** | Duplicate Image Finder v05 · Fast Duplicate Finder · File Organizer v2 · Flatten Nested Files |
+| **Color** | Color Palette Analyzer v3 · Cultural Color Palette Generator · Color Selector · Color Name to RGB / Hex |
+| **Crop & Compose** | Compose Crop · Compose Crop (Scored) · Smart Image Cropper |
+| **Size & Aspect** | Wan 2.2 Aspect Ratio Helper · Wan 2.2 Size Preset · Qwen Aspect Ratio Helper (+ Advanced) · Aspect Ratio for 2-step Latent · Tile Calculator |
+| **Text** | Text Overlay v04 · Word Cloud Generator |
+| **Tools / Workflow** | PNG Info Diagnostic V4 · Workflow Toolkit v3 |
+| **Deprecated** | Earlier versions of the nodes above. They stay so existing workflows load; new workflows should use the current ones. |
 
 ## Installation
 
-### 📋 Requirements
+### 1. Install the pack
 
-- Python 3.8+
-- ComfyUI
-- **ExifTool** - needed by AAA Save Image All and the V3 / V4 metadata nodes to write metadata into image files ([install](https://exiftool.org/install.html))
-- PyExiv2 (optional, used by the older nodes)
-- vtracer (optional, for SVG output)
+**ComfyUI Manager / Comfy Registry** - search for **AAA Metadata System** (registry id `aaa-metadata-system`), install, restart ComfyUI.
 
-### 🚀 Install as ComfyUI Custom Node
-
-Option 1: Clone Repository
-
-1. Clone this repository into your ComfyUI custom_nodes directory:
+**Or with git:**
 
 ```bash
 cd ComfyUI/custom_nodes
 git clone https://github.com/EricRollei/AAA_Metadata_System.git
-```
-
-2. Install required dependencies:
-
-```bash
 cd AAA_Metadata_System
 pip install -r requirements.txt
 ```
 
-3. Restart ComfyUI
+With the portable Windows build use its own Python: `..\..\..\python_embeded\python.exe -m pip install -r requirements.txt`.
 
-For detailed installation instructions, including platform-specific steps for PyExiv2 and ExifTool, see [INSTALLATION.md](INSTALLATION.md).
+### 2. Install ExifTool (required for metadata inside the image files)
 
-## Included Nodes
+AAA Save Image All and the current metadata nodes use [ExifTool](https://exiftool.org) to write metadata into image files. **Without ExifTool the images are still saved, with the `.xmp` sidecar and the `.txt` report, but nothing is written inside the image file** - so Lightroom, XnView and Capture One will not see prompt, keywords or models unless they read the sidecar.
 
-This package includes several ComfyUI nodes that integrate with the metadata system:
+| System | Install |
+|---|---|
+| **Windows** | Download the 64-bit zip from <https://exiftool.org>, rename `exiftool(-k).exe` to `exiftool.exe`, and put it (together with its `exiftool_files` folder) in `C:\Program Files\exiftool\`, or anywhere on your `PATH`. |
+| **macOS** | `brew install exiftool` |
+| **Linux** | `sudo apt install libimage-exiftool-perl` (Debian / Ubuntu) or `sudo dnf install perl-Image-ExifTool` (Fedora) |
+
+Check: `exiftool -ver` in a terminal prints a version number. In ComfyUI, the `summary` output of the save node says "metadata NOT embedded" when ExifTool could not be used.
+
+### 3. Optional
+
+- `vtracer` - for SVG output (`pip install vtracer`)
+- `pyexiv2` - only used by the deprecated nodes
+
+### Requirements
+
+- ComfyUI (developed and tested on ComfyUI 0.45 with Python 3.12)
+- ExifTool (see above)
+- The Python packages in `requirements.txt` (Pillow, numpy, OpenCV, psd-tools, tifffile and others)
+
+## Compatibility with photo software
+
+| Program | What works |
+|---|---|
+| **Adobe Lightroom Classic** | Caption (prompt), title, keywords incl. hierarchy `AI > Model / LoRA / Sampler`, creator, copyright, rating - all searchable in the Library filter. After changing files outside Lightroom use *Metadata > Read Metadata from File*. |
+| **XnView MP** | Description, keywords, title, creator and rating in the info panel and in search. |
+| **Capture One** | Description, keywords, title, creator. Old-style IPTC blocks are removed from the files because Capture One prefers them over XMP. |
+| **Adobe Photoshop** | File Info shows the standard fields; PSD and layered TIFF open with their layers; embedded ICC profiles are honoured. |
+| **Civitai, AI image browsers** | A1111-style parameters block with model and LoRA hashes; the ComfyUI workflow in PNGs. |
+
+Checked in Lightroom Classic and Photoshop. XnView MP and Capture One read the same standard XMP fields.
+
+## What is stored
+
+**Standard fields** (what every program understands)
+
+| Field | Content |
+|---|---|
+| `dc:description` | Your description, then the prompt |
+| `dc:title`, `dc:creator`, `dc:rights` | Title, creator, copyright from the node |
+| `dc:subject` | Your keywords + model, LoRA and sampler names + project |
+| `lr:hierarchicalSubject` | `AI|Model|...`, `AI|LoRA|...`, `AI|Sampler|...`, `Project|...` |
+| `photoshop:Headline` | Base model(s) |
+| `photoshop:Instructions` | One-line summary of the settings |
+| `xmp:Rating` | Star rating (set with Metadata Entry V3) |
+
+**Generation record** - namespace `hcai` (`http://historic.camera/ns/ai/2.0/`): prompt, negative prompt, the prompt as typed when a rewriter changed it, every model with role / strength / hash, every sampling pass with steps, CFG, sampler, scheduler, seed, image size, and the complete record once more as JSON (`hcai:RecordJSON`). Where a generator node states its own settings (Eric_Krea2), that statement is stored as the record's `recipe`.
+
+**Measurements** - namespace `eiqa` (`http://historic.camera/ns/eiqa/2.0/`): scores and classifications from analysis nodes, one group per node, plus the same as JSON (`eiqa:AnalysisJSON`).
+
+**Next to the image**, if switched on: `.xmp` sidecar (same content), `.txt` report, workflow `.json`.
+
+Files written by earlier versions of this pack (namespaces under `ericproject.org`) are still read by all current nodes.
+
+## Nodes in more detail
 
 ### AAA Save Image All
 
-The main save node - see [the section at the top](#-aaa-save-image-all---the-swiss-army-knife-of-image-saving).
-Earlier versions (`Save Image with Metadata v099d`) are listed under *Eric's Nodes / Deprecated*; workflows that use them keep working and run the current code.
+See [the section at the top](#-aaa-save-image-all---the-swiss-army-knife-of-image-saving). `Save Image with Metadata v099d` is listed under *Eric's Nodes / Deprecated*; workflows that use it keep working and run the current code.
 
 [Widget-by-widget documentation of the options shared with v099d](documentation/ReadMe%20Docs/MetadataSaveImage_Node_Documentation.md)
 
-### Metadata Query Node
+### Metadata Query V4
 
-This specialized node allows for extracting specific information from image metadata using multiple query methods:
+Reads values out of an image's metadata:
 
-- **Multiple Query Methods**:
-  - **Simple Dot Notation**: Easy path-based access (e.g., "ai_info.generation.model")
-  - **JSONPath Expressions**: Advanced queries with filtering and conditions
-  - **Regular Expressions**: Pattern matching across the entire metadata structure
-- **Source Flexibility**: Query from embedded metadata, XMP sidecars, text files, or database
-- **Source Prioritization**: Configure which source to try first with customizable fallback chain
-- **Formatted Output**: Results are properly formatted for human readability
-- **Performance Optimization**: Query results are cached for rapid repeated access
-- **Default Values**: Specify fallback values when data isn't found
-- **Extraction Flexibility**: Return specific values or entire metadata structures
+- **Three query methods**: dot paths (`ai_info.generation.model`), JSONPath expressions, regular expressions
+- **Sources**: the image file, its XMP sidecar, the text report, or the database - with a fallback order you choose
+- **Reads both generations of files**: images saved by the current nodes and by earlier versions of the pack
+- Default values when a field is missing; whole sections or single values as output
 
-This node is invaluable for creating conditional workflows based on metadata values or for extracting specific information to display or process in other nodes.
+Useful for workflows that branch on metadata, or to show a stored prompt or score.
 
 [Detailed documentation](documentation/ReadMe%20Docs/MetadataQueryNodeDoc.md)
 
 ### Text Overlay Node
 
-The Text Overlay Node allows you to overlay customizable text on images with extensive styling options:
+Overlay text on images with extensive styling:
 
-- **Rich Text Styling**:
-  - Font selection from system fonts with preview browser
-  - Size, color, alignment, and spacing controls
-  - Bold and italic formatting
-- **Special Effects**:
-  - **Gradient Effect**: Smooth color transitions
-  - **Metal Effect**: Reflective metallic appearance
-  - **Neon Effect**: Bright center with colored glow
-  - **Emboss Effect**: 3D raised appearance
-- **Layer Blending**: Multiple blend modes (normal, multiply, screen, overlay)
-- **Shadow & Outline**: Customizable drop shadows and outlines with color control
-- **Dynamic Text Wrapping**: Automatic wrapping based on width or character count
-- **External Text Support**: Load content from TXT or Markdown files
-- **Transparent Background**: Create text overlays with adjustable opacity
-- **Precise Positioning**: Percentage-based offsets for exact placement
+- Font selection from system fonts, size, colour, alignment, spacing, bold and italic
+- Effects: gradient, metal, neon, emboss; drop shadow and outline
+- Blend modes (normal, multiply, screen, overlay) and adjustable opacity
+- Automatic wrapping by width or character count; text from TXT or Markdown files
+- Percentage-based positioning
 
-Perfect for adding watermarks, captions, titles, or decorative text to your AI-generated images.
+For watermarks, captions and titles.
 
-[Detailed documentation](docs/TextOverlayNodev04Documentation.md)
+[Detailed documentation](documentation/ReadMe%20Docs/TextOverlayNodev04Documentation.md)
 
-### Image Duplicate Finder Node
+### Duplicate Image Finder
 
-This advanced node scans folders of images to identify duplicates and similar images using perceptual hashing algorithms:
+Scans folders for duplicates and similar images with perceptual hashing:
 
-- **Multiple Hash Algorithm Support**:
-  - **pHash (Perceptual Hash)**: Best general-purpose algorithm for visual similarity
-  - **dHash (Difference Hash)**: Excellent for detecting structural changes
-  - **aHash (Average Hash)**: Fast simple algorithm for quick scanning
-  - **wHash (Wavelet Hash)**: Sophisticated analysis using Haar wavelets
-- **Multi-level Similarity Detection**:
-  - Exact duplicates: Bit-for-bit identical images
-  - Similar images: Visually similar but not identical
-  - Variants: Related images with more significant differences
-- **Advanced Analysis**:
-  - Filename pattern analysis for related images
-  - Metadata analysis including generation parameters
-  - Combined hash and metadata scoring
-- **Metadata Integration**:
-  - Stores computed hashes for faster future processing
-  - Records similarity relationships between images
-- **Duplicate Management**:
-  - Move or copy duplicates to organized folders
-  - Group by similarity level
-  - Keep largest/best quality option
-- **Comprehensive Reporting**:
-  - Detailed JSON reports
-  - CSV export for spreadsheet analysis
-  - Summary statistics
+- Hash algorithms: pHash, dHash, aHash, wHash
+- Three levels: exact duplicates, similar images, variants
+- File-name pattern and metadata analysis in addition to the hashes
+- Move or copy duplicates into folders, grouped by similarity; keep the largest / best file
+- JSON report, CSV export, summary statistics
 
-Invaluable for organizing large image collections, identifying variations from the same generation session, and maintaining a clean image library.
+[Detailed documentation](documentation/ReadMe%20Docs/DuplicateImageFinderNodeDoc.md)
 
-[Detailed documentation](docs/DuplicateImageFinderNodeDoc.md)
+### Wan 2.2 size nodes
 
-### Wan 2.2 Video Generation Nodes
+- **Wan 2.2 Aspect Ratio Helper**: analyses an input image and gives suitable dimensions for image-to-video
+- **Wan 2.2 Size Preset**: dimensions from predefined aspect ratios for text-to-video
 
-Two specialized nodes for optimizing image dimensions for Hunyuan Video (Wan 2.2) workflows:
+Both keep all dimensions divisible by 8, check the known Wan 2.2 training sizes first, and offer six size presets from Tiny (~200K pixels) to Gigantic (~2M pixels). Size Preset has 15 predefined ratios (6 portrait, square, 8 landscape).
 
-- **Wan22 Aspect Ratio Helper** (v2.2): Analyzes input images and generates optimal dimensions for Image-to-Video (I2V) workflows
-- **Wan22 Size Preset** (v1.1): Generates optimal dimensions from predefined aspect ratios for Text-to-Video (T2V) workflows
+## Settings
 
-Both nodes provide intelligent dimension calculation that:
+Environment variables, read when ComfyUI starts. None is needed for normal use.
 
-- **Follows Wan 2.2 Official Specs**: All dimensions divisible by 8 pixels, aspect ratios from 1:3 to 3:1
-- **Smart Hybrid Algorithm**: Checks 28 known Wan 2.2 training sizes first for best results, calculates optimal dimensions if no exact match
-- **6 Size Presets**:
-  - **Tiny** (~200K pixels): Fast prototyping and quick tests
-  - **Small** (~400K pixels): Balanced quality for mobile/social media
-  - **Medium** (~650K pixels): Standard professional quality
-  - **Large** (~900K pixels): High-quality video production
-  - **Extra-Large** (~1.4M pixels): Premium quality for detailed scenes
-  - **Gigantic** (~2M pixels): Maximum quality for feature productions
-- **15 Predefined Ratios** (Size Preset only): Portrait (6 ratios), Square (1:1), Landscape (8 ratios)
-- **Multiple Outputs**: Width, height, and detailed info text showing all size options
-- **No Rewiring Needed**: Change size preset from dropdown without reconnecting nodes
+| Variable | Effect |
+|---|---|
+| `AAA_META_VERBOSE=1` | Full console output (the pack is quiet by default) |
+| `AAA_META_CAPTURE=0` | Switch off the collection of generation data while workflows run |
+| `AAA_META_MIRROR=0` | Do not mirror what other nodes write through the older metadata service |
+| `AAA_META_MEASUREMENT_PACKS=a,b` | Node packs whose results count as measurements (default: Eric-image-classification) |
+| `AAA_META_KEEP_OLD_SAVE=1` | Keep the original v099d save code for the v099d node |
+| `AAA_META_KEEP_OLD_LABELS=1` / `AAA_META_KEEP_OLD_CATEGORIES=1` | No "(deprecated)" labels / keep the previous menu categories |
+| `AAA_META_NO_SEARCH_ALIASES=1` | Do not add search words to the nodes |
 
-Perfect for ensuring your video generation inputs meet Wan 2.2 specifications without manual dimension calculations or trial-and-error testing.
+## For developers
 
-[Detailed documentation](documentation/WAN22_NODES_README.md)
+The pack has two layers:
 
-## Using the Metadata System
-
-### 💡 Basic Usage
-
-```python
-from Metadata_system import MetadataService
-
-# Initialize the service
-service = MetadataService(debug=False, human_readable_text=True)
-
-# Write metadata to all supported formats
-metadata = {
-    'basic': {
-        'title': 'My AI Image',
-        'description': 'A beautiful landscape',
-        'keywords': ['landscape', 'mountains', 'AI generated'],
-        'rating': 4,
-        'creator': 'Your Name',
-        'rights': 'Copyright © 2025'
-    },
-    'ai_info': {
-        'generation': {
-            'model': 'stable-diffusion-v1-5',
-            'prompt': 'majestic mountains with snow caps',
-            'negative_prompt': 'ugly, blurry',
-            'sampler': 'euler_a',
-            'steps': 30,
-            'cfg_scale': 7.5,
-            'seed': 1234567890,
-            'width': 512,
-            'height': 512
-        }
-    },
-    'analysis': {
-        'technical': {
-            'blur': {
-                'score': 0.92,
-                'higher_better': True
-            },
-            'noise': {
-                'score': 0.08,
-                'higher_better': False
-            }
-        },
-        'aesthetic': {
-            'composition': 7.8,
-            'color_harmony': 8.2,
-            'overall': 7.9
-        }
-    }
-}
-
-# Write to all supported formats
-result = service.write_metadata('path/to/image.png', metadata)
-
-# Read metadata with fallback to other formats if primary fails
-stored_metadata = service.read_metadata('path/to/image.png', source='embedded', fallback=True)
-
-# Access specific metadata fields
-if 'basic' in stored_metadata:
-    print(f"Title: {stored_metadata['basic'].get('title')}")
-    
-if 'ai_info' in stored_metadata and 'generation' in stored_metadata['ai_info']:
-    gen = stored_metadata['ai_info']['generation']
-    print(f"Prompt: {gen.get('prompt')}")
-    print(f"Seed: {gen.get('seed')}")
+```
+ ComfyUI nodes
+   AAA Save Image All, Entry V3, Query V4, Filter V3, load nodes v2 ...
+        |                                         |
+        v                                         v
+ aaa_meta  (current core)                 eric_metadata  (first generation)
+   capture/   what ran: inputs, outputs,    MetadataService facade
+              loaded files                  handlers: embedded, XMP sidecar,
+   builder    -> GenerationRecord                     text file, SQLite
+   xmp_packet -> standard + hcai + eiqa     still used for the database and by
+   writer / reader / embed (ExifTool)       the deprecated nodes; everything it
+   psd_writer, layers, color, pixels        writes is mirrored into the new fields
 ```
 
-### Database Querying Example
+**Read what is stored in a file** (inside ComfyUI's Python):
 
 ```python
-from Metadata_system.handlers.db import DatabaseHandler
+from AAA_Metadata_System.aaa_meta import reader
 
-# Initialize database handler
-db = DatabaseHandler()
+data = reader.read_file("path/to/image.png")      # embedded metadata, else the .xmp sidecar
+print(data["standard"])                            # title, description, keywords ...
+print(data["record"])                              # the generation record (dict) or None
+print(data["analysis"])                            # measurements
+print(reader.generation_summary(data))             # flat: prompt, model, loras, sampler, seed ...
+```
 
-# Perform a complex search
-results = db.search_images({
-    # Find images with high aesthetic scores
-    'scores': [
-        ('aesthetic', 'overall', '>', 7.5),
-        ('technical', 'blur.score', '>', 0.85)
-    ],
-    # With specific keywords
-    'keywords': ['landscape', 'mountains'],
-    # Using a specific model
-    'classifications': [('style', 'photorealistic')],
-    # In landscape orientation
-    'orientation': 'landscape',
-    # Order by creation date
-    'order_by': 'images.created_date DESC',
-    # Limit results
-    'limit': 10
+**Add measurements or change fields in an existing file** (pixels untouched, nothing else erased):
+
+```python
+from AAA_Metadata_System.aaa_meta import writer
+
+writer.add_analysis("path/to/image.png", {"my_node": {"sharpness": 0.82, "label": "portrait"}})
+writer.patch_metadata("path/to/image.png", rating=4, project="Spring catalogue", sidecar=True)
+```
+
+**The first-generation service** still works and is what the Query / Filter nodes present as their structure (`basic`, `ai_info.generation`, `analysis`):
+
+```python
+from AAA_Metadata_System import MetadataService
+
+service = MetadataService(debug=False, human_readable_text=True)
+service.write_metadata("path/to/image.png", {
+    "basic": {"title": "My image", "keywords": ["landscape"], "rating": 4},
+    "analysis": {"technical": {"blur": {"score": 0.92, "higher_better": True}}},
 })
-
-# Process results
-for image in results:
-    print(f"Found image: {image['filepath']}")
-    print(f"Rating: {image.get('rating', 'N/A')}")
+stored = service.read_metadata("path/to/image.png", source="embedded", fallback=True)
 ```
 
-For more detailed usage instructions, including advanced features and examples, see [USAGE_GUIDE.md](USAGE_GUIDE.md).
+**Let the save node pick up your node's settings.** If your generator node returns its settings as a JSON string - an object with a key ending in `_settings_version` - AAA Save Image All stores it with the image automatically. Results of analysis nodes are collected the same way when the pack is listed in `AAA_META_MEASUREMENT_PACKS`.
 
-## System Architecture
-
-The metadata system follows a layered architecture:
-
-```
-┌────────────────────────────────────────────────────┐
-│                   ComfyUI Nodes                    │
-│  ┌──────────────┐ ┌───────────┐ ┌───────────────┐  │
-│  │Metadata Save │ │Metadata   │ │Duplicate      │  │
-│  │Image Node    │ │Query Node │ │Finder Node    │  │
-│  └──────┬───────┘ └─────┬─────┘ └───────┬───────┘  │
-└─────────┼───────────────┼───────────────┼──────────┘
-          │               │               │
-          ▼               ▼               ▼
-┌─────────────────────────────────────────────────────┐
-│              MetadataService (Facade)               │
-│  ┌───────────────┐ ┌─────────────┐ ┌────────────┐   │
-│  │write_metadata │ │read_metadata│ │merge_metadata   │
-│  └───────────────┘ └─────────────┘ └────────────┘   │
-└────────────────────────┬────────────────────────────┘
-                         │
-                         ▼
-┌─────────────────────────────────────────────────────┐
-│                   Handlers Layer                    │
-├─────────────┬───────────┬────────────┬─────────────┤
-│ Embedded    │ XMP       │ Text File  │ Database    │
-│ Handler     │ Handler   │ Handler    │ Handler     │
-└─────────────┴───────────┴────────────┴─────────────┘
-                         │
-                         ▼
-┌─────────────────────────────────────────────────────┐
-│                  Utility Components                  │
-├─────────────┬───────────┬────────────┬─────────────┤
-│ Format      │ Namespace │ Error      │ XML         │
-│ Detector    │ Manager   │ Recovery   │ Tools       │
-└─────────────┴───────────┴────────────┴─────────────┘
-```
-
-- **ComfyUI Nodes**: User interface for the metadata system in ComfyUI workflows
-- **MetadataService**: Facade pattern service that coordinates between different handlers
-- **Handlers**: Specialized components for different metadata formats
-  - `EmbeddedMetadataHandler`: For metadata within image files using PyExiv2/ExifTool
-  - `XMPSidecarHandler`: For XMP sidecar files following MWG standards
-  - `TxtFileHandler`: For text file metadata with human-readable formatting
-  - `DatabaseHandler`: For SQLite database storage with advanced querying
-- **Utility Components**: Support infrastructure for the system
-  - `FormatHandler`: Detects file formats and capabilities
-  - `NamespaceManager`: Manages XMP namespaces and registrations
-  - `ErrorRecovery`: Implements recovery strategies for errors
-  - `XMLTools`: Provides XML processing utilities for XMP
-
-For detailed architecture information, including component interactions and design decisions, see [ARCHITECTURE.md](ARCHITECTURE.md).
-
-## Metadata Structure
-
-The metadata is organized into a hierarchical structure with sections for different types of information:
-
-```
-metadata
-├── basic
-│   ├── title                  # Image title
-│   ├── description            # Detailed description
-│   ├── keywords               # Tags/keywords as array
-│   ├── rating                 # 1-5 star rating
-│   ├── creator                # Author/creator name
-│   └── rights                 # Copyright information
-│
-├── analysis
-│   ├── technical              # Technical measurements
-│   │   ├── blur               # Blur detection results
-│   │   │   ├── score          # Blur score (higher = sharper)
-│   │   │   └── higher_better  # Whether higher is better
-│   │   ├── noise              # Noise detection results
-│   │   └── dimensions         # Image dimensions
-│   │
-│   ├── aesthetic              # Aesthetic analysis 
-│   │   ├── composition        # Composition quality score
-│   │   ├── color_harmony      # Color harmony score
-│   │   └── overall            # Overall aesthetic score
-│   │
-│   └── pyiqa                  # Image quality assessment models
-│       ├── niqe               # No-reference IQA model
-│       ├── musiq              # Multi-scale IQA model
-│       └── clipiqa            # CLIP-based IQA model
-│
-├── ai_info
-│   ├── generation             # Generation parameters
-│   │   ├── model              # Model name/identifier
-│   │   ├── prompt             # Positive prompt
-│   │   ├── negative_prompt    # Negative prompt
-│   │   ├── sampler            # Sampling algorithm
-│   │   ├── steps              # Number of sampling steps
-│   │   ├── cfg_scale          # Classifier-free guidance scale
-│   │   ├── seed               # Random seed value
-│   │   ├── width              # Image width
-│   │   ├── height             # Image height
-│   │   └── loras              # Array of LoRA models used
-│   │
-│   └── workflow               # Complete workflow structure
-│       └── nodes              # Workflow node definitions
-│
-└── regions                    # Image regions/areas
-    ├── faces                  # Detected faces
-    │   ├── type               # Region type
-    │   ├── name               # Region name/identifier
-    │   ├── area               # Coordinates (normalized 0-1)
-    │   └── extensions         # Additional analysis data
-    │
-    └── areas                  # Other detected regions
-        ├── type               # Region type
-        ├── name               # Region name/identifier
-        ├── area               # Coordinates (normalized 0-1)
-        └── extensions         # Additional data
-```
-
-This structured approach makes it easy to organize, retrieve, and understand the metadata associated with each image.
-
-For a complete reference of the metadata structure, including field descriptions and format-specific details, see [METADATA_STRUCTURE.md](METADATA_STRUCTURE.md).
-
-## Integration
-
-The metadata system can be integrated with other ComfyUI nodes or Python applications:
-
-```python
-# Create a metadata-aware ComfyUI node
-class MyMetadataAwareNode:
-    @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "images": ("IMAGE",),
-                "metadata": ("METADATA", {"default": None})
-            }
-        }
-    
-    RETURN_TYPES = ("IMAGE", "METADATA")
-    FUNCTION = "process"
-    
-    def process(self, images, metadata=None):
-        # Initialize metadata if None
-        if metadata is None:
-            metadata = {}
-            
-        # Process images...
-        
-        # Add your own metadata
-        if 'analysis' not in metadata:
-            metadata['analysis'] = {}
-        
-        metadata['analysis']['my_analysis'] = {
-            'score': 0.85,
-            'timestamp': self._get_timestamp()
-        }
-        
-        return (processed_images, metadata)
-```
-
-For detailed integration instructions, including custom handler implementation and extension points, see [INTEGRATION_GUIDE.md](INTEGRATION_GUIDE.md).
-
-## API Reference
-
-The metadata system provides a comprehensive API:
-
-```python
-# MetadataService API
-service = MetadataService(debug=False, human_readable_text=True)
-service.write_metadata(filepath, metadata, targets=None)
-service.read_metadata(filepath, source='embedded', fallback=True)
-service.merge_metadata(filepath, metadata, targets=None)
-service.set_resource_identifier(resource_uri)
-service.set_text_format(human_readable=True)
-
-# Handler APIs
-from Metadata_system.handlers.embedded import EmbeddedMetadataHandler
-from Metadata_system.handlers.xmp import XMPSidecarHandler
-from Metadata_system.handlers.txt import TxtFileHandler
-from Metadata_system.handlers.db import DatabaseHandler
-
-# DatabaseHandler query API
-db = DatabaseHandler()
-results = db.search_images({...})
-batch_results = db.batch_operation('read', filepaths)
-```
-
-For a comprehensive API reference, including all methods, parameters, and return values, see [API_REFERENCE.md](API_REFERENCE.md).
+More: [architecture](documentation/ReadMe%20Docs/MetadataSystemArchitecture.md) · [metadata structure of the first-generation service](documentation/ReadMe%20Docs/MetadataStructureReference.md) · [API reference](documentation/ReadMe%20Docs/API_Reference.md) · [usage guide](documentation/ReadMe%20Docs/MetadataSystemUsageGuide.md). These four describe the first-generation service; `documentation/OVERHAUL_PLAN_2026-11.md` documents the current core.
 
 ## 👏 Acknowledgements
 
-- Thanks to the ComfyUI team for creating an amazing platform
-- PyExiv2 for comprehensive EXIF/XMP metadata support
-- The Metadata Working Group (MWG) for establishing metadata standards
+- The ComfyUI team for the platform
+- Phil Harvey for ExifTool
+- psd-tools, tifffile, Pillow and vtracer
+- The Metadata Working Group (MWG) and IPTC for the metadata standards
 
 
 ## Contributing
