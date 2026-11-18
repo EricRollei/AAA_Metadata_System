@@ -94,6 +94,78 @@ def main() -> int:
         print(f"   {category}: {len(tree[category])}")
 
     nodes = pack.NODE_CLASS_MAPPINGS
+    # ---- the v099d node id runs the v1.0 code, with v099d's widgets first and in order
+    try:
+        import json
+        from PIL import Image
+        v099d_module = sys.modules[real_name + ".nodes.eric_metadata_save_image_v099d"]
+        original, upgraded = v099d_module.MetadataAwareSaveImage, nodes["MetadataAwareSaveImage_v099d"]
+        old_types, new_types = original.INPUT_TYPES(), upgraded.INPUT_TYPES()
+        same_order = all(list(new_types[s])[:len(old_types[s])] == list(old_types[s]) for s in ("required", "optional"))
+        appended = list(new_types["optional"])[len(old_types["optional"]):]
+        runs_v100 = issubclass(upgraded, nodes["MetadataAwareSaveImage_v100"]) and upgraded is not nodes["MetadataAwareSaveImage_v100"]
+        outputs_kept = tuple(upgraded.RETURN_TYPES[:len(original.RETURN_TYPES)]) == tuple(original.RETURN_TYPES)
+        values = {}                                           # only what a v099d workflow sends: v099d's own inputs
+        for section in ("required", "optional"):
+            for name, spec in old_types[section].items():
+                if name == "images" or not isinstance(spec, tuple):
+                    continue
+                options = spec[1] if len(spec) > 1 and isinstance(spec[1], dict) else {}
+                if "default" in options:
+                    values[name] = options["default"]
+                elif isinstance(spec[0], list) and spec[0]:
+                    values[name] = spec[0][0]
+        values.pop("filename_prefix", None)
+        with tempfile.TemporaryDirectory() as old_folder, contextlib.redirect_stdout(io.StringIO()):
+            values.update({"custom_output_directory": old_folder, "file_format": "jpg", "keywords": "zqold",
+                           "hash_models": False})          # a stray stored value from an older v099d layout
+            old_prompt = {
+                "1": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": "zqoldModel.safetensors"}},
+                "2": {"class_type": "CLIPTextEncode", "inputs": {"text": "a zqold harbour", "clip": ["1", 1]}},
+                "5": {"class_type": "KSampler", "inputs": {"model": ["1", 0], "positive": ["2", 0], "seed": 7, "steps": 5,
+                                                            "cfg": 2.0, "sampler_name": "euler", "scheduler": "normal", "denoise": 1.0}},
+                "9": {"class_type": "MetadataAwareSaveImage_v099d", "inputs": {"images": ["5", 0]}}}
+            result = upgraded().save_with_metadata(torch.rand(1, 48, 64, 3), filename_prefix="oldid", prompt=old_prompt,
+                                                   extra_pnginfo={"workflow": {"nodes": []}}, unique_id="9", **values)
+            path = result["result"][1]
+            tags = read_tags(path) if path and os.path.isfile(path) else {}
+        written = ("zqold harbour" in str(tags.get("XMP-dc:Description", "")) and "zqoldModel" in (tags.get("XMP-dc:Subject") or [])
+                   and path.lower().endswith(".jpg"))
+        good = same_order and runs_v100 and outputs_kept and written and upgraded.CATEGORY == DEPRECATED_CATEGORY \
+            and nodes["MetadataAwareSaveImage_v100"].CATEGORY != DEPRECATED_CATEGORY
+        ok = ok and good
+        print(f"v099d id on v1.0 code: ok={good} widget order kept={same_order} appended={appended} outputs kept={outputs_kept} "
+              f"JPEG saved with prompt + model keyword from v099d inputs only={written}")
+        # saved workflows: how many values each stored v099d node carries, against the widgets v099d defines
+        widget_types = ("INT", "FLOAT", "STRING", "BOOLEAN")
+        expected = sum(1 for s in ("required", "optional") for spec in old_types[s].values()
+                       if isinstance(spec, tuple) and (isinstance(spec[0], list) or spec[0] in widget_types))
+        counts = {}
+        workflow_root = os.path.join(COMFY, "user", "default", "workflows")
+        for root, _dirs, files in os.walk(workflow_root):
+            for name in files:
+                if not name.endswith(".json"):
+                    continue
+                try:
+                    with open(os.path.join(root, name), "r", encoding="utf-8") as handle:
+                        data = json.load(handle)
+                except Exception:
+                    continue
+                stack = [data] if isinstance(data, dict) else []
+                while stack:
+                    item = stack.pop()
+                    for node in item.get("nodes", []) if isinstance(item.get("nodes"), list) else []:
+                        if isinstance(node, dict) and node.get("type") == "MetadataAwareSaveImage_v099d":
+                            length = len(node.get("widgets_values") or [])
+                            counts[length] = counts.get(length, 0) + 1
+                    definitions = item.get("definitions")
+                    if isinstance(definitions, dict):
+                        stack.extend(d for d in definitions.get("subgraphs", []) if isinstance(d, dict))
+        print(f"   saved workflows: v099d nodes by number of stored widget values {dict(sorted(counts.items()))}; "
+              f"v099d defines {expected} widgets, the upgraded node {expected + len(appended)}")
+    except Exception:
+        ok = False
+        print(f"v099d id on v1.0 code: EXCEPTION\n{traceback.format_exc()[-1500:]}")
     prompt = {
         "1": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": "testModel_v1.safetensors"}},
         "2": {"class_type": "CLIPTextEncode", "inputs": {"text": "a zqpack lighthouse in fog", "clip": ["1", 1]}},

@@ -27,6 +27,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Save True SVG v2, Save Qwen Layers v2, file extractors V4 / V3, Workflow Toolkit v3, Civitai extractors V2.
 
 ### Changed
+- **Save Image with Metadata v099d now runs the v1.0 code.** Existing workflows need no editing: v099d's
+  widgets keep their order, the five new ones follow with their defaults. Set `AAA_META_KEEP_OLD_SAVE=1`  
+  to keep the original v099d. Note: Adobe RGB / ProPhoto now convert the pixels (v099d only attached the
+  profile), and 8-bit PNG / JPG / WebP honour the colour-profile and embed-workflow widgets.
 - The pack loads once. Imports by the names `AAA_Metadata_System` and `custom_nodes.AAA_Metadata_System`
   resolve to the loaded pack whatever the folder is called (the registry installs it as
   `aaa-metadata-system`, where those imports used to fail).

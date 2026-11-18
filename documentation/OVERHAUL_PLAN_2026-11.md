@@ -558,3 +558,28 @@ nodes are left alone.
 - `requires-python = ">=3.8"` and `requires-comfyui = ">=0.3.0"` in pyproject are untested claims.
 - `setup.py` is a leftover (name `comfyui-nodes`, placeholder e-mail); only its version was changed.
 
+
+
+---
+
+## Update 2026-11-18 (b) - the v099d node id runs the v1.0 code (option 1, full switch)
+
+- `MetadataAwareSaveImage_v099d` is now registered to `MetadataAwareSaveImageV099dUpgraded`, a subclass of the
+  v1.0 node (`upgrade_old_ids` in `eric_metadata_save_image_v100.py`, called from the pack `__init__`).
+  The v099d file itself is unchanged and is still the base class. `AAA_META_KEEP_OLD_SAVE=1` restores the original.
+- Everything v1.0 does now applies to existing v099d workflows, including the visible changes: real pixel
+  conversion for Adobe RGB / ProPhoto, colour-profile and embed-workflow widgets honoured for 8-bit PNG / JPG /
+  WebP, JPEG saving works, new .txt / sidecar layout, old IPTC stripped, `ericproject.org` namespace no longer written.
+- It stays under "Eric's Nodes/Deprecated" with the "(deprecated)" label so new workflows start from v1.0.
+- Saved workflows on this machine (159 v099d nodes): 114 carry 57 widget values = v099d's current layout, they
+  line up exactly. 35 (Sep-Nov 2025) carry 56: saved before `enable_runtime_hooks` existed; their last value was
+  already one slot off before this change and nothing reaches the new widgets. 10 (Oct-Nov 2025) carry 58: saved
+  when v099d had an `a1111_compat_mode` widget at the end; that stray true/false now lands on `hash_models`.
+  The node ignores any value there that is not a valid choice and uses "cached"; ComfyUI does not reject it
+  because v099d's VALIDATE_INPUTS takes **kwargs (execution.py skips the list check then). The dropdown will
+  show the stray value until it is set once.
+- `Save Image with Metadata (Simple)` was NOT switched: it is its own class with a different widget set
+  (33 optional widgets, no layer inputs, plus `a1111_compat_mode`), so the v1.0 class cannot stand in for it.
+- Checked: `check_pack_load.py` saves a JPEG through the old id with only v099d's inputs (plus a stray value on
+  `hash_models`) and finds prompt and model keyword in the file. Not checked: opening those workflows in the
+  browser.

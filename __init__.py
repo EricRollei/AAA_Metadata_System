@@ -132,6 +132,14 @@ for file in os.listdir(nodes_dir):
     except Exception as e:
         print(f"Error loading node module {name}: {str(e)}")
 
+# Workflows built with "Save Image with Metadata v099d" run the v1.0 code (same widgets, same order).
+# AAA_META_KEEP_OLD_SAVE=1 keeps the original v099d behaviour.
+try:
+    from .nodes.eric_metadata_save_image_v100 import upgrade_old_ids as _upgrade_old_save_node
+    _upgrade_old_save_node(NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS)
+except Exception as _upgrade_error:
+    print(f"[AAA Metadata] v099d save node not upgraded: {_upgrade_error!r}")
+
 # Version info
 __version__ = "0.2.0"
 

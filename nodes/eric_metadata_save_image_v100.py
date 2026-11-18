@@ -121,11 +121,20 @@ class MetadataAwareSaveImageV100(_SaveImageV099d):
     # ------------------------------------------------------------------
     def save_with_metadata(self, images, filename_prefix="ComfyUI", prompt=None, extra_pnginfo=None,
                            unique_id=None, dynprompt=None, **kwargs):
+        # The appended widgets. A workflow saved with an older v099d can carry one stored value too
+        # many (a widget that existed for a while); it then lands on the first of these. Anything
+        # that is not a valid choice falls back to the default instead of being used.
+        def _flag(name, default):
+            value = kwargs.pop(name, default)
+            return value if isinstance(value, bool) else default
+
         hash_models = kwargs.pop("hash_models", "cached")
-        embed_a1111 = kwargs.pop("embed_a1111", True)
-        include_model_paths = kwargs.pop("include_model_paths", False)
-        convert_colors = kwargs.pop("convert_to_color_profile", True)
-        collect_measurements = kwargs.pop("collect_measurements", True)
+        if hash_models not in ("cached", "compute", "off"):
+            hash_models = "cached"
+        embed_a1111 = _flag("embed_a1111", True)
+        include_model_paths = _flag("include_model_paths", False)
+        convert_colors = _flag("convert_to_color_profile", True)
+        collect_measurements = _flag("collect_measurements", True)
         self._v100_layer_detect_calls = 0
         self._v100_frame_index = -1
         self._v100_notes = []
@@ -367,6 +376,27 @@ class MetadataAwareSaveImageV100(_SaveImageV099d):
                     image = np.concatenate([converted, image[..., 3:]], axis=-1) if image.shape[-1] == 4 else converted
         return super()._save_additional_format(image, primary_path, metadata, prompt=prompt,
                                                extra_pnginfo=extra_pnginfo, **kwargs)
+
+
+class MetadataAwareSaveImageV099dUpgraded(MetadataAwareSaveImageV100):
+    """Registered under the v099d node id, so workflows built with v099d run the v1.0 code
+    without being edited: same widgets in the same order (the new ones come after them and
+    take their defaults), same two outputs first."""
+    DESCRIPTION = ("Save Image with Metadata v099d - now runs the v1.0 code: generation data is collected "
+                   "automatically and written where Lightroom, XnView and Capture One search.")
+
+
+OLD_SAVE_NODE_ID = "MetadataAwareSaveImage_v099d"
+
+
+def upgrade_old_ids(class_mappings, display_names=None):
+    """Point the v099d node id at the v1.0 code. AAA_META_KEEP_OLD_SAVE=1 keeps the original v099d."""
+    if os.environ.get("AAA_META_KEEP_OLD_SAVE", "").strip().lower() in ("1", "true", "yes", "on"):
+        return False
+    if OLD_SAVE_NODE_ID not in class_mappings:
+        return False
+    class_mappings[OLD_SAVE_NODE_ID] = MetadataAwareSaveImageV099dUpgraded
+    return True
 
 
 NODE_CLASS_MAPPINGS = {"MetadataAwareSaveImage_v100": MetadataAwareSaveImageV100}
