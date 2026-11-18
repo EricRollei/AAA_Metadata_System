@@ -1,7 +1,7 @@
 """
 check_companions.py
 End-to-end check of the companion nodes without the server (CPU only):
-save with "Metadata Save Image v1.0", then Entry V3 / Add Measurements v1 /
+save with "AAA Save Image All PNG WebP JPG PSD TIFF SVG w Metadata", then Entry V3 / Add Measurements v1 /
 Query V4 on the saved file, and confirm nothing already stored was lost.
 Also confirms every new version has exactly the widgets of the one before it.
 
@@ -69,7 +69,7 @@ def main() -> int:
                                                     "latent_image": ["4", 0], "seed": 777, "steps": 12, "cfg": 4.0,
                                                     "sampler_name": "euler", "scheduler": "normal", "denoise": 1.0}},
         "6": {"class_type": "VAEDecode", "inputs": {"samples": ["5", 0], "vae": ["1", 2]}},
-        "9": {"class_type": "MetadataAwareSaveImage_v100", "inputs": {"images": ["6", 0]}},
+        "9": {"class_type": "AAA_SaveImageAll", "inputs": {"images": ["6", 0]}},
     }
     image = torch.rand(1, 128, 128, 3)
     with tempfile.TemporaryDirectory() as folder:

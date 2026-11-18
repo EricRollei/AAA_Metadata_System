@@ -19,7 +19,8 @@ SUFFIX = " (deprecated)"
 
 # old node id -> the node that replaces it
 SUPERSEDED = {
-    "MetadataAwareSaveImage_v099d": "MetadataAwareSaveImage_v100",
+    "MetadataAwareSaveImage_v099d": "AAA_SaveImageAll",
+    "MetadataAwareSaveImage_v100": "AAA_SaveImageAll",          # its first, unpublished id
     "Eric_Metadata_Entry_V2": "Eric_Metadata_Entry_V3",
     "Eric_Metadata_Query_V3": "Eric_Metadata_Query_V4",
     "Eric_Metadata_Filter_V2": "Eric_Metadata_Filter_V3",

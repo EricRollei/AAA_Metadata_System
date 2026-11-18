@@ -2,7 +2,7 @@
 check_save_node.py
 Offline checks (embedded Python, no server, no GPU, needs exiftool):
   1. the save core writes every format with the pack's real ICC profiles
-  2. the bridge used by "Metadata Save Image v1.0" writes embedded metadata,
+  2. the bridge used by "AAA Save Image All PNG WebP JPG PSD TIFF SVG w Metadata" writes embedded metadata,
      the .xmp sidecar and the legacy .txt for a file the old writer produced,
      and keeps the workflow chunk already in the PNG
 

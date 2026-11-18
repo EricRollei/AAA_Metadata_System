@@ -1,6 +1,6 @@
 """
 eric_metadata_save_image_v100.py
-Metadata Save Image v1.0
+AAA Save Image All PNG WebP JPG PSD TIFF SVG w Metadata (first called "Metadata Save Image v1.0")
 
 Every widget, feature and widget ORDER of "Save Image with Metadata v099d" is
 kept exactly (output folder modes, filename formats, layers and blend modes,
@@ -378,19 +378,40 @@ class MetadataAwareSaveImageV100(_SaveImageV099d):
                                                extra_pnginfo=extra_pnginfo, **kwargs)
 
 
-class MetadataAwareSaveImageV099dUpgraded(MetadataAwareSaveImageV100):
-    """Registered under the v099d node id, so workflows built with v099d run the v1.0 code
-    without being edited: same widgets in the same order (the new ones come after them and
-    take their defaults), same two outputs first."""
-    DESCRIPTION = ("Save Image with Metadata v099d - now runs the v1.0 code: generation data is collected "
-                   "automatically and written where Lightroom, XnView and Capture One search.")
+# What the node search finds this node by (ComfyUI searches id, display name and these; not the description).
+SAVE_SEARCH_ALIASES = [
+    "save image", "image saver", "export image", "swiss army knife",
+    "psd", "tiff", "tif", "svg", "png", "jpg", "jpeg", "webp", "apng", "16-bit", "16 bit",
+    "layers", "photoshop", "photoshop layers", "layered tiff", "mask layers",
+    "icc", "icc profile", "color profile", "color management", "colour management", "colour profile",
+    "adobe rgb", "prophoto", "display p3", "srgb",
+    "metadata", "xmp", "iptc", "exif", "sidecar", "keywords", "caption", "lightroom", "capture one", "xnview",
+    "civitai", "a1111 parameters", "prompt metadata",
+]
+MetadataAwareSaveImageV100.SEARCH_ALIASES = SAVE_SEARCH_ALIASES
 
-
+SAVE_NODE_ID = "AAA_SaveImageAll"
+SAVE_NODE_NAME = "AAA Save Image All PNG WebP JPG PSD TIFF SVG w Metadata"
+FIRST_V100_NODE_ID = "MetadataAwareSaveImage_v100"           # the id this node had before it was published
 OLD_SAVE_NODE_ID = "MetadataAwareSaveImage_v099d"
 
 
+class MetadataAwareSaveImageV100FirstId(MetadataAwareSaveImageV100):
+    """The same node under its first, unpublished id, so workflows saved with it still load."""
+    SEARCH_ALIASES = []
+
+
+class MetadataAwareSaveImageV099dUpgraded(MetadataAwareSaveImageV100):
+    """Registered under the v099d node id, so workflows built with v099d run the current code
+    without being edited: same widgets in the same order (the new ones come after them and
+    take their defaults), same two outputs first."""
+    SEARCH_ALIASES = []                                      # the search should lead to the current node
+    DESCRIPTION = ("Save Image with Metadata v099d - now runs the code of \"" + SAVE_NODE_NAME + "\": generation "
+                   "data is collected automatically and written where Lightroom, XnView and Capture One search.")
+
+
 def upgrade_old_ids(class_mappings, display_names=None):
-    """Point the v099d node id at the v1.0 code. AAA_META_KEEP_OLD_SAVE=1 keeps the original v099d."""
+    """Point the v099d node id at the current code. AAA_META_KEEP_OLD_SAVE=1 keeps the original v099d."""
     if os.environ.get("AAA_META_KEEP_OLD_SAVE", "").strip().lower() in ("1", "true", "yes", "on"):
         return False
     if OLD_SAVE_NODE_ID not in class_mappings:
@@ -399,5 +420,7 @@ def upgrade_old_ids(class_mappings, display_names=None):
     return True
 
 
-NODE_CLASS_MAPPINGS = {"MetadataAwareSaveImage_v100": MetadataAwareSaveImageV100}
-NODE_DISPLAY_NAME_MAPPINGS = {"MetadataAwareSaveImage_v100": "Metadata Save Image v1.0"}
+NODE_CLASS_MAPPINGS = {SAVE_NODE_ID: MetadataAwareSaveImageV100,
+                       FIRST_V100_NODE_ID: MetadataAwareSaveImageV100FirstId}
+NODE_DISPLAY_NAME_MAPPINGS = {SAVE_NODE_ID: SAVE_NODE_NAME,
+                              FIRST_V100_NODE_ID: "Metadata Save Image v1.0"}

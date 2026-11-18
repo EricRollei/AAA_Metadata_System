@@ -103,7 +103,7 @@ def main() -> int:
         old_types, new_types = original.INPUT_TYPES(), upgraded.INPUT_TYPES()
         same_order = all(list(new_types[s])[:len(old_types[s])] == list(old_types[s]) for s in ("required", "optional"))
         appended = list(new_types["optional"])[len(old_types["optional"]):]
-        runs_v100 = issubclass(upgraded, nodes["MetadataAwareSaveImage_v100"]) and upgraded is not nodes["MetadataAwareSaveImage_v100"]
+        runs_v100 = issubclass(upgraded, nodes["AAA_SaveImageAll"]) and upgraded is not nodes["AAA_SaveImageAll"]
         outputs_kept = tuple(upgraded.RETURN_TYPES[:len(original.RETURN_TYPES)]) == tuple(original.RETURN_TYPES)
         values = {}                                           # only what a v099d workflow sends: v099d's own inputs
         for section in ("required", "optional"):
@@ -132,8 +132,17 @@ def main() -> int:
         written = ("zqold harbour" in str(tags.get("XMP-dc:Description", "")) and "zqoldModel" in (tags.get("XMP-dc:Subject") or [])
                    and path.lower().endswith(".jpg"))
         good = same_order and runs_v100 and outputs_kept and written and upgraded.CATEGORY == DEPRECATED_CATEGORY \
-            and nodes["MetadataAwareSaveImage_v100"].CATEGORY != DEPRECATED_CATEGORY
+            and nodes["AAA_SaveImageAll"].CATEGORY != DEPRECATED_CATEGORY
+        first_id = nodes.get("MetadataAwareSaveImage_v100")
+        aliases = getattr(nodes["AAA_SaveImageAll"], "SEARCH_ALIASES", [])
+        named = (pack.NODE_DISPLAY_NAME_MAPPINGS["AAA_SaveImageAll"].startswith("AAA Save Image All")
+                 and first_id is not None and issubclass(first_id, nodes["AAA_SaveImageAll"])
+                 and first_id.CATEGORY == DEPRECATED_CATEGORY and not first_id.SEARCH_ALIASES and not upgraded.SEARCH_ALIASES
+                 and all(word in aliases for word in ("psd", "layers", "color management", "lightroom", "xmp")))
+        good = good and named
         ok = ok and good
+        print(f"save node name / first id kept / search aliases ({len(aliases)}): ok={named} "
+              f"name={pack.NODE_DISPLAY_NAME_MAPPINGS['AAA_SaveImageAll']!r}")
         print(f"v099d id on v1.0 code: ok={good} widget order kept={same_order} appended={appended} outputs kept={outputs_kept} "
               f"JPEG saved with prompt + model keyword from v099d inputs only={written}")
         # saved workflows: how many values each stored v099d node carries, against the widgets v099d defines
@@ -232,7 +241,7 @@ def main() -> int:
             import json
             from PIL import Image
             from PIL.PngImagePlugin import PngInfo
-            types = nodes["MetadataAwareSaveImage_v100"].INPUT_TYPES()
+            types = nodes["AAA_SaveImageAll"].INPUT_TYPES()
             defaults = {}
             for section in ("required", "optional"):
                 for name, spec in types[section].items():
@@ -242,8 +251,8 @@ def main() -> int:
             defaults.pop("filename_prefix", None)
             defaults["custom_output_directory"] = os.path.join(folder, "png")
             prompt_v100 = dict(prompt)
-            prompt_v100["9"] = {"class_type": "MetadataAwareSaveImage_v100", "inputs": {"images": ["6", 0]}}
-            new_png = nodes["MetadataAwareSaveImage_v100"]().save_with_metadata(
+            prompt_v100["9"] = {"class_type": "AAA_SaveImageAll", "inputs": {"images": ["6", 0]}}
+            new_png = nodes["AAA_SaveImageAll"]().save_with_metadata(
                 torch.rand(1, 96, 128, 3), filename_prefix="extract", prompt=prompt_v100,
                 extra_pnginfo={"workflow": {"nodes": []}}, unique_id="9", **defaults)["result"][1]
             old_png = os.path.join(folder, "old.png")

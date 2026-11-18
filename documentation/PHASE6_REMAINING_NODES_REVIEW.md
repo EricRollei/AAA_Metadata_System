@@ -8,7 +8,7 @@ each node's logic.
 ## What already works for these nodes without touching them
 
 - **Model / LoRA capture**: the capture hook sees every model file a node loads, so the Multi-LoRA loaders,
-  LoRA tester and checkpoint tester already show up in the generation record of "Metadata Save Image v1.0".
+  LoRA tester and checkpoint tester already show up in the generation record of "AAA Save Image All PNG WebP JPG PSD TIFF SVG w Metadata".
 - **Measurements**: nodes that call `MetadataService.write_metadata` with analysis data
   (duplicate finder v05, colour palette analyzer v3, PNG info diagnostic v3, save true SVG, workflow toolkit v2,
   split workflow extractor V2, PNG metadata extractor v3) are mirrored into the new measurement namespace.

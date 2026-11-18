@@ -602,7 +602,7 @@ def test_deprecation_labels_and_tiff_layer_reading():
     class New(Old):
         pass
 
-    classes = {"MetadataAwareSaveImage_v099d": Old, "MetadataAwareSaveImage_v100": New, "Eric_Metadata_Entry_V2": Old}
+    classes = {"MetadataAwareSaveImage_v099d": Old, "AAA_SaveImageAll": New, "Eric_Metadata_Entry_V2": Old}
     names = {"MetadataAwareSaveImage_v099d": "Save Image with Metadata v099d", "Eric_Metadata_Entry_V2": "Entry V2"}
     marked = deprecation.apply(classes, names)
     assert marked == ["MetadataAwareSaveImage_v099d"]                    # Entry V3 not loaded -> V2 left alone

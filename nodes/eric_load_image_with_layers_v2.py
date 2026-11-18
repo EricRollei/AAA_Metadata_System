@@ -6,7 +6,7 @@ Same widgets and the same first five outputs as "Eric Load Image with Layers".
 Added:
   * the layer modes (all_layers, visible_only, layer_by_name, layer_by_index) also
     work on TIFF files that carry Photoshop layers - written by Photoshop or by
-    "Metadata Save Image v1.0". Each layer comes back at full canvas size, at the
+    "AAA Save Image All PNG WebP JPG PSD TIFF SVG w Metadata". Each layer comes back at full canvas size, at the
     file's bit depth, its transparency as the mask.
   * five more outputs at the end with what the v2 save node stored in the file:
     prompt, negative_prompt, record_json, measurements_json, metadata_summary

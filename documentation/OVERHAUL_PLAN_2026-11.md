@@ -583,3 +583,17 @@ nodes are left alone.
 - Checked: `check_pack_load.py` saves a JPEG through the old id with only v099d's inputs (plus a stray value on
   `hash_models`) and finds prompt and model keyword in the file. Not checked: opening those workflows in the
   browser.
+
+
+---
+
+## Update 2026-11-18 (c) - name and search words of the save node
+
+- Display name: "AAA Save Image All PNG WebP JPG PSD TIFF SVG w Metadata" (Eric's wording). Node id: `AAA_SaveImageAll`.
+- The first id, `MetadataAwareSaveImage_v100` (never published), stays registered as a subclass under
+  "Eric's Nodes/Deprecated" so workflows saved with it during testing still load.
+- `SEARCH_ALIASES` (43 words) on the save node. ComfyUI's node search looks at id, display name and
+  search_aliases - not at the description (frontend 1.58.5: Fuse keys name / display_name / search_aliases;
+  server.py reads the SEARCH_ALIASES class attribute). The two old ids carry no aliases, so a search for
+  "psd" or "lightroom" leads to the current node only.
+- Not done yet: aliases for the other nodes of the pack; a new label for the v099d entry.

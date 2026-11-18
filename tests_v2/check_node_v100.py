@@ -1,6 +1,6 @@
 """
 check_node_v100.py
-End-to-end check of "Metadata Save Image v1.0" without the server (CPU only):
+End-to-end check of "AAA Save Image All PNG WebP JPG PSD TIFF SVG w Metadata" without the server (CPU only):
   * its widgets are exactly v099d's, same order, with the new ones appended
   * it really saves files into a chosen folder and the metadata verifies
 
@@ -52,7 +52,7 @@ def main() -> int:
                                                     "latent_image": ["4", 0], "seed": 1234567, "steps": 20, "cfg": 5.5,
                                                     "sampler_name": "euler", "scheduler": "normal", "denoise": 1.0}},
         "6": {"class_type": "VAEDecode", "inputs": {"samples": ["5", 0], "vae": ["1", 2]}},
-        "9": {"class_type": "MetadataAwareSaveImage_v100", "inputs": {"images": ["6", 0]}},
+        "9": {"class_type": "AAA_SaveImageAll", "inputs": {"images": ["6", 0]}},
     }
     cases = [
         {"file_format": "png"},
@@ -189,7 +189,7 @@ def main() -> int:
                 json.dump({"sweep_manifest_version": 1, "sweep_id": "zqsweep", "base": ultra, "cells": manifest_cells}, handle)
             panel = {"prompt": "zqpanel prompt", "seed": 77, **{k: v for k, v in ultra.items() if k != "seed_mode"}}
             sweep_prompt = {"20": {"class_type": "EricKrea2MultistageUltraV2", "inputs": panel},
-                            "21": {"class_type": "MetadataAwareSaveImage_v100", "inputs": {"images": ["20", 0]}}}
+                            "21": {"class_type": "AAA_SaveImageAll", "inputs": {"images": ["20", 0]}}}
             settings = {"krea2_settings_version": 1, "ultra": ultra,
                         "sweep": {"sweep_id": "zqsweep", "manifest": manifest_path,
                                   "cells": [{"batch_index": i, "cell_index": i, "overrides": c["overrides"]}

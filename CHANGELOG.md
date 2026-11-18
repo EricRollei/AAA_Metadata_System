@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.2.0] - 2026-11-18
 
 ### Added - Metadata system 2.0
-- **Metadata Save Image v1.0**: every option of v099d, plus generation data collected automatically while
+- **AAA Save Image All PNG WebP JPG PSD TIFF SVG w Metadata**: every option of v099d, plus generation data collected automatically while
   the workflow runs and written where Lightroom, XnView MP and Capture One search (caption, keywords,
   headline, instructions) and in the `hcai` / `eiqa` namespaces. Display P3, real colour conversion,
   true 16-bit TIFF and PSD, Photoshop-readable layers in TIFF, automatic collection of measurements.
@@ -27,7 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Save True SVG v2, Save Qwen Layers v2, file extractors V4 / V3, Workflow Toolkit v3, Civitai extractors V2.
 
 ### Changed
-- **Save Image with Metadata v099d now runs the v1.0 code.** Existing workflows need no editing: v099d's
+- The new save node is called **AAA Save Image All PNG WebP JPG PSD TIFF SVG w Metadata** (id `AAA_SaveImageAll`). The node search also finds it by
+  psd, tiff, svg, layers, icc, color management, metadata, xmp, lightroom and similar words (`SEARCH_ALIASES`).
+- **Save Image with Metadata v099d now runs the same code.** Existing workflows need no editing: v099d's
   widgets keep their order, the five new ones follow with their defaults. Set `AAA_META_KEEP_OLD_SAVE=1`  
   to keep the original v099d. Note: Adobe RGB / ProPhoto now convert the pixels (v099d only attached the
   profile), and 8-bit PNG / JPG / WebP honour the colour-profile and embed-workflow widgets.
