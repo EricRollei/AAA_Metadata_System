@@ -159,6 +159,13 @@ try:
 except Exception as _deprecation_error:
     print(f"[AAA Metadata] deprecation labels not applied: {_deprecation_error!r}")
 
+# v2: words the node search finds each node by (AAA_META_NO_SEARCH_ALIASES=1 disables)
+try:
+    from .aaa_meta.search_aliases import apply as _apply_search_aliases
+    _apply_search_aliases(NODE_CLASS_MAPPINGS)
+except Exception as _alias_words_error:
+    print(f"[AAA Metadata] search aliases not applied: {_alias_words_error!r}")
+
 WEB_DIRECTORY = "./web"
 
 __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS", "WEB_DIRECTORY"]

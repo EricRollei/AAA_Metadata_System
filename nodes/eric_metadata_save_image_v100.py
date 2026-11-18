@@ -95,6 +95,20 @@ class MetadataAwareSaveImageV100(_SaveImageV099d):
             "tooltip": "Store results of analysis nodes (Eric-image-classification: UniPercept, blur, IQA...) that "
                        "worked on this image in this run. No wiring needed; the image just has to pass through "
                        "them, or they read it from a node that feeds this save."})
+        # tooltips that no longer describe what happens (same widgets, same positions)
+        for name, text in (
+                ("bit_depth", "8-bit (standard) or 16-bit (high precision). True 16-bit for PNG, TIFF and PSD; "
+                              "JPG, WebP, APNG and SVG are always 8-bit."),
+                ("enable_runtime_hooks", "No longer used: generation data is always collected while the workflow "
+                                         "runs. Kept so existing workflows keep their widget positions."),
+                ("auto_extract_generation_params", "Collect prompts, models, LoRAs, sampler settings and seeds "
+                                                   "automatically while the workflow runs - no wiring needed."),
+                ("color_profile", "Colour profile to embed. With convert_to_color_profile on, the pixels are "
+                                  "converted into this colour space as well."),
+                ("embed_workflow", "Embed the ComfyUI workflow in the PNG so the file can be dragged back into "
+                                   "ComfyUI. For other formats use save_workflow_as_json.")):
+            if name in optional and isinstance(optional[name], tuple) and len(optional[name]) > 1:
+                optional[name] = (optional[name][0], {**optional[name][1], "tooltip": text})
         types["optional"] = optional
         hidden = dict(types.get("hidden", {}))
         hidden["dynprompt"] = "DYNPROMPT"
@@ -106,8 +120,10 @@ class MetadataAwareSaveImageV100(_SaveImageV099d):
     FUNCTION = "save_with_metadata"
     OUTPUT_NODE = True
     CATEGORY = _SaveImageV099d.CATEGORY
-    DESCRIPTION = ("Save images with automatically collected generation metadata that Lightroom, XnView and "
-                   "Capture One can search. Same options as v099d.")
+    DESCRIPTION = ("The Swiss army knife of image saving: PNG, JPG, WebP, TIFF, PSD, APNG and SVG; true 16-bit; "
+                   "Photoshop layers with blend modes in PSD and TIFF; real colour management (sRGB, Adobe RGB, "
+                   "ProPhoto, Display P3); prompts, models, LoRAs and settings collected automatically and written "
+                   "where Lightroom, XnView and Capture One can search them.")
 
     def __init__(self):
         super().__init__()

@@ -139,6 +139,11 @@ def main() -> int:
                  and first_id is not None and issubclass(first_id, nodes["AAA_SaveImageAll"])
                  and first_id.CATEGORY == DEPRECATED_CATEGORY and not first_id.SEARCH_ALIASES and not upgraded.SEARCH_ALIASES
                  and all(word in aliases for word in ("psd", "layers", "color management", "lightroom", "xmp")))
+        with_words = [i for i, cls in nodes.items() if getattr(cls, "SEARCH_ALIASES", None)]
+        current = [i for i, cls in nodes.items() if cls.CATEGORY != DEPRECATED_CATEGORY]
+        old_with_words = [i for i in with_words if nodes[i].CATEGORY == DEPRECATED_CATEGORY]
+        named = named and not old_with_words and sorted(with_words) == sorted(current)
+        print(f"search aliases: {len(with_words)} of {len(current)} current nodes have them, deprecated nodes with aliases={old_with_words}")
         good = good and named
         ok = ok and good
         print(f"save node name / first id kept / search aliases ({len(aliases)}): ok={named} "

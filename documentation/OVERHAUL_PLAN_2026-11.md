@@ -597,3 +597,19 @@ nodes are left alone.
   server.py reads the SEARCH_ALIASES class attribute). The two old ids carry no aliases, so a search for
   "psd" or "lightroom" leads to the current node only.
 - Not done yet: aliases for the other nodes of the pack; a new label for the v099d entry.
+
+
+---
+
+## Update 2026-11-18 (d) - search words for the whole pack, README
+
+- `aaa_meta/search_aliases.py`: one table, node id -> search words, applied from the pack `__init__`.
+  All 63 current nodes have words; the 19 deprecated ones have none. `AAA_META_NO_SEARCH_ALIASES=1` disables.
+- Save node: five tooltips corrected (bit_depth said "16-bit only works with PNG"; enable_runtime_hooks is no
+  longer used; auto_extract, color_profile, embed_workflow). Same widgets, same positions. New DESCRIPTION.
+- README: new top section "AAA Save Image All - the Swiss army knife of image saving" (what sets it apart,
+  good to know, the nodes around it); requirements now say ExifTool is needed; the old "Metadata Save Image
+  Node" section points to the new one. The older sections below (Key Highlights, API examples) are unchanged
+  and partly describe the pre-2.0 system.
+- Publishing note: without ExifTool the save node embeds nothing (image, sidecar and .txt are still written).
+  A native fallback for PNG / JPG / WebP would remove that dependency for most users - not built.

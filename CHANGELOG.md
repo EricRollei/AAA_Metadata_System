@@ -29,6 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - The new save node is called **AAA Save Image All PNG WebP JPG PSD TIFF SVG w Metadata** (id `AAA_SaveImageAll`). The node search also finds it by
   psd, tiff, svg, layers, icc, color management, metadata, xmp, lightroom and similar words (`SEARCH_ALIASES`).
+- Every current node has search words (`aaa_meta/search_aliases.py`); deprecated nodes have none, so a
+  search leads to the current version. README: new section on AAA Save Image All.
 - **Save Image with Metadata v099d now runs the same code.** Existing workflows need no editing: v099d's
   widgets keep their order, the five new ones follow with their defaults. Set `AAA_META_KEEP_OLD_SAVE=1`  
   to keep the original v099d. Note: Adobe RGB / ProPhoto now convert the pixels (v099d only attached the

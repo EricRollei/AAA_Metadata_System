@@ -3,7 +3,77 @@
 ![GitHub License](https://img.shields.io/github/license/EricRollei/AAA_Metadata_System)
 ![Python](https://img.shields.io/badge/python-3.8%2B-blue)
 
-Advanced metadata management and multi-format image save/load system for ComfyUI with professional features for Adobe workflows and color management.
+One save node that does it all - PNG, JPG, WebP, TIFF, PSD, APNG and SVG, true 16-bit, Photoshop layers, real colour management - and that writes what made each image where Lightroom, XnView MP and Capture One can search it. Plus the load, metadata, LoRA, colour and file nodes that go with it.
+
+## ⭐ AAA Save Image All - the Swiss army knife of image saving
+
+**Node:** `AAA Save Image All PNG WebP JPG PSD TIFF SVG w Metadata` (menu: *Eric's Nodes / Output*).
+Search for it by what you need: `psd`, `tiff`, `layers`, `icc`, `color management`, `metadata`, `xmp`, `lightroom`.
+
+Connect your images and press Queue. No wiring of prompts, models or seeds: the node watches the workflow run and records what was actually used.
+
+### What sets it apart
+
+**1. Your images become searchable in a photo catalogue.**
+Most save nodes put the prompt in a PNG text chunk that only AI tools read. This node writes standard XMP fields that photo software indexes:
+
+| What | Where it is written | Where you see it |
+|---|---|---|
+| Prompt | `dc:description` | Lightroom "Caption", XnView "Description", Capture One "Description" |
+| Checkpoint, LoRAs, sampler, your own keywords | `dc:subject` + hierarchical keywords | Keyword lists and keyword search everywhere |
+| Title, creator, copyright, project | `dc:title`, `dc:creator`, `dc:rights`, headline | Standard IPTC panels |
+| Full generation record (every pass, seed, strength, hash) | `hcai:` namespace, as fields and as one JSON | Any XMP-aware tool; the pack's own Query / Filter nodes |
+| Quality measurements | `eiqa:` namespace | The pack's Query / Filter nodes |
+
+Type a LoRA name into Lightroom's keyword filter and get every image made with it.
+
+**2. Generation data is collected while the workflow runs - not guessed from the graph.**
+- Works with switches, wildcards, prompt rewriters and all-in-one sampler nodes: what is stored is what the node received, including the prompt after an LLM rewrote it (the typed prompt is kept as well).
+- Every model with its role: checkpoint / UNet, text encoders, VAE, LoRAs with strengths, upscale models.
+- Every sampling pass: steps, CFG, sampler, scheduler, seed, start / end step.
+- Model hashes and an A1111-style parameters block, so Civitai and AI image browsers recognise the resources.
+- Parameter sweeps (Eric_Krea2): each image of the batch carries the settings of its own cell.
+- Scores from analysis nodes (Eric-image-classification: UniPercept, IQA, blur...) that looked at the image in the same run are stored automatically.
+
+**3. Layers that open as layers in Photoshop - in PSD and in TIFF.**
+- Two overlay layers and two mask layers next to the main image, each with its own name, opacity and blend mode (normal, multiply, screen, overlay, add, subtract, difference, darken, lighten, colour dodge, colour burn).
+- 8-bit and true 16-bit PSD.
+- Layered TIFF: the layers are written in Photoshop's own TIFF layer format, so the file opens with its layer stack in Photoshop while every other program shows the flattened picture.
+- The matching load node (`Eric Load Image with Layers v2`) brings the layers back into ComfyUI.
+
+**4. Real colour management.**
+- sRGB (three v4 variants), Adobe RGB, ProPhoto RGB and Display P3.
+- The pixels are converted into the chosen colour space with the rendering intent you pick, and the ICC profile is embedded - the file looks the same in a colour-managed viewer as in ComfyUI. (Attach-only, without conversion, is one switch away.)
+- True 16-bit PNG, TIFF and PSD: the full precision of the tensor, not an 8-bit image in a 16-bit container.
+
+**5. Seven formats, and two at once.**
+- PNG, JPG, WebP, TIFF, PSD, animated PNG, and true vector SVG (traced; needs `vtracer`).
+- Optional second copy of every image in another format, with its own quality, colour profile and file-name suffix - for example a 16-bit ProPhoto TIFF master plus an sRGB JPG for the web, in one pass.
+- Three quality presets; alpha as premultiplied, straight, matte on a colour of your choice, or saved separately.
+
+**6. Files where you want them.**
+- Output sub-folder or any absolute path; date tokens in folder and file names; project name and date / time in the file name; padded or simple numbering.
+- Next to the image, as you choose: XMP sidecar, a readable `.txt` report, the workflow as JSON.
+- The ComfyUI workflow stays embedded in PNGs, so drag-and-drop back into ComfyUI keeps working; for other formats it can be saved as JSON.
+
+### Good to know
+- **ExifTool is required** for the metadata inside the image files. Without it the node still saves the image, the XMP sidecar and the `.txt` report, and tells you in its `summary` output that nothing was embedded. Install: <https://exiftool.org/install.html>.
+- Old-style IPTC (IIM) blocks are removed on purpose: Capture One prefers them over XMP and would show stale data.
+- Disk paths of your models are not stored unless you switch `include_model_paths` on - names and hashes only.
+- **Coming from `Save Image with Metadata v099d`?** Nothing to do. Existing workflows load unchanged and now run this node's code: all v099d widgets are in the same place, the new ones follow at the end. One visible change: with Adobe RGB or ProPhoto selected the pixels are now converted (v099d only attached the profile). `AAA_META_KEEP_OLD_SAVE=1` restores the old behaviour.
+
+### The nodes around it
+| Node | What it does |
+|---|---|
+| Eric Load Image Extended v2 / Load Image with Layers v2 | Load at full 16-bit precision, read layers from PSD and TIFF, hand out the stored prompt and record |
+| Eric's Metadata Entry V3 | Add or change title, caption, keywords, rating on existing files |
+| Add Measurements to Image v1 | Store scores from any analysis node in a file |
+| Eric's Metadata Query V4, Filter V3, Enhanced Filter V3 | Read fields and pick images by what is stored in them |
+| Metadata Debugger V3, Consolidator V3, Generation Record (debug) v1 | See exactly what is stored and what was collected |
+| Eric Save True SVG Image v2, Save Qwen Layers v2 | SVG with metadata; layer stacks from Qwen-Image-Layered as PSD / layered TIFF |
+| PNG Metadata Extractor V4, Civitai Prompt Extractor v2, Workflow Toolkit v3 | Read prompts, resources and workflows out of existing images |
+
+`tools/backfill_library.py` makes the PNGs you already have searchable from their embedded workflow (dry run by default).
 
 ## 🎯 Key Highlights
 
@@ -51,8 +121,9 @@ This metadata system provides professional-grade image and metadata management f
 
 - Python 3.8+
 - ComfyUI
-- PyExiv2 (optional, for enhanced embedded metadata support)
-- ExifTool (optional, for additional format support)
+- **ExifTool** - needed by AAA Save Image All and the V3 / V4 metadata nodes to write metadata into image files ([install](https://exiftool.org/install.html))
+- PyExiv2 (optional, used by the older nodes)
+- vtracer (optional, for SVG output)
 
 ### 🚀 Install as ComfyUI Custom Node
 
@@ -80,25 +151,12 @@ For detailed installation instructions, including platform-specific steps for Py
 
 This package includes several ComfyUI nodes that integrate with the metadata system:
 
-### Metadata Save Image Node
+### AAA Save Image All
 
-![Metadata Save Image Node](docs/images/save_image_node.png)
+The main save node - see [the section at the top](#-aaa-save-image-all---the-swiss-army-knife-of-image-saving).
+Earlier versions (`Save Image with Metadata v099d`) are listed under *Eric's Nodes / Deprecated*; workflows that use them keep working and run the current code.
 
-This node saves images with comprehensive metadata embedding. It extends ComfyUI's standard image saving capabilities with:
-
-- **Multiple Format Support**: Save images in PNG, JPG, WEBP, TIFF, PSD, APNG, and SVG formats with appropriate metadata for each
-- **Metadata Embedding**: Embeds comprehensive metadata directly into image files following industry standards
-- **Color Profile Support**: Embed ICC color profiles (sRGB, Adobe RGB, ProPhoto) for color accuracy across devices
-- **Layer Support**: Handle layers for formats that support them (TIFF, PSD) with custom blending modes
-- **16-bit Export**: High-precision 16-bit image export for formats that support it
-- **Alpha Channel Handling**: Advanced transparency handling with premultiplied, straight, and matte modes
-- **Workflow Embedding**: Save ComfyUI workflow data directly in PNG files for later reloading
-- **Animated PNG**: Create APNGs from multiple input images with timing controls
-- **Multiple Documentation Formats**: Generate XMP sidecar, JSON workflow, and human-readable text files
-
-The node automatically captures generation parameters from your workflow, including model names, prompts, sampling settings, and other crucial information that helps reproduce your results.
-
-[Detailed documentation](documentation/ReadMe%20Docs/MetadataSaveImage_Node_Documentation.md)
+[Widget-by-widget documentation of the options shared with v099d](documentation/ReadMe%20Docs/MetadataSaveImage_Node_Documentation.md)
 
 ### Metadata Query Node
 
