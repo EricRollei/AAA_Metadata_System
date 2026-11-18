@@ -121,3 +121,66 @@ def select_layers(layers: List[Dict[str, Any]], load_mode: str, layer_name: str 
             return [layers[int(layer_index)]], f"Selected: {layers[int(layer_index)]['name']} (index {layer_index})"
         return [], "Invalid index"
     return [], ""
+
+
+def file_generation(path: str) -> Dict[str, Any]:
+    """
+    Generation data for a file, best source first:
+      "stored"          the record the v2 save node put into the file / sidecar
+      "workflow graph"  rebuilt from the ComfyUI workflow inside a PNG (older files)
+      ""                nothing found
+    Returns {"origin", "record" (dict), "analysis" (dict), "flat" (prompt, model, seed...), "summary" (text)}.
+    """
+    result: Dict[str, Any] = {"origin": "", "record": {}, "analysis": {}, "flat": {}, "summary": ""}
+    if not path or not os.path.isfile(path):
+        return result
+    try:
+        parsed = reader.read_file(path)
+    except Exception:
+        parsed = {}
+    result["analysis"] = parsed.get("analysis") or {}
+    record = None
+    if parsed.get("record"):
+        try:
+            record = GenerationRecord.from_dict(parsed["record"])
+            result["origin"] = "stored"
+        except Exception:
+            record = None
+    if record is None and path.lower().endswith(".png"):
+        try:
+            from PIL import Image
+            from .builder import build_record
+            from .graph import PromptGraph
+            with Image.open(path) as image:
+                raw = image.info.get("prompt")
+                size = image.size
+            if raw:
+                graph = PromptGraph.from_prompt(json.loads(raw))
+                savers = sorted((node_id for node_id in graph.nodes
+                                 if "save" in graph.class_type(node_id).lower()
+                                 and any(name in graph.links(node_id) for name in ("images", "image", "source", "input"))),
+                                key=lambda n: (0 if "image" in graph.class_type(n).lower() else 1, str(n)))
+                if savers:
+                    candidate = build_record(graph, savers[0])
+                    if candidate.positive or candidate.positive_source or candidate.passes:
+                        candidate.width, candidate.height = size
+                        record = candidate
+                        result["origin"] = "workflow graph"
+        except Exception:
+            record = None
+    if record is not None:
+        result["record"] = record.to_dict()
+        first = record.passes[0] if record.passes else None
+        base = record.base_models[0] if record.base_models else None
+        result["flat"] = {key: value for key, value in {
+            "prompt": record.positive or record.positive_source, "negative_prompt": record.negative,
+            "model": base.stem if base else None, "sampler": first.sampler if first else None,
+            "scheduler": first.scheduler if first else None, "steps": first.steps if first else None,
+            "cfg": first.cfg if first else None, "seed": first.seed if first else None,
+            "loras": [m.stem for m in record.loras] or None}.items() if value not in (None, "", [])}
+        result["summary"] = (f"Generation record ({'stored in the file' if result['origin'] == 'stored' else 'rebuilt from the workflow in the file'}):\n"
+                             + record.summary())
+    if result["analysis"]:
+        result["summary"] = (result["summary"] + "\n" if result["summary"] else "") \
+            + "Measurements: " + ", ".join(list(result["analysis"].keys())[:20])
+    return result

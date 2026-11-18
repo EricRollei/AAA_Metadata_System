@@ -29,6 +29,14 @@ PARTICULAR PURPOSE AND NONINFRINGEMENT.
 - Improved error recovery
 """
 
+# Console output goes through one switch (see aaa_meta/console.py): problems are always shown,
+# everything else only with the node's debug option on or AAA_META_VERBOSE=1.
+try:
+    from ..aaa_meta.console import quiet_print as print, note_error as _note_error
+except Exception:                                    # used outside the pack
+    def _note_error(error, where=""):
+        pass
+
 import os
 import json
 import base64
@@ -198,14 +206,16 @@ class PngMetadataExtractorNodeV3:
             if isinstance(data, str):
                 try:
                     return json.loads(data)
-                except:
+                except Exception as _caught:
+                    _note_error(_caught, "Eric_png_metadata_extractor_node_v3.py:201")
                     pass
                     
             # Try base64 decode
             try:
                 decoded = base64.b64decode(data).decode('utf-8')
                 return json.loads(decoded)
-            except:
+            except Exception as _caught:
+                _note_error(_caught, "Eric_png_metadata_extractor_node_v3.py:208")
                 pass
                 
             return {}
@@ -239,7 +249,8 @@ class PngMetadataExtractorNodeV3:
                     # Check if it looks like a workflow (has prompt/nodes or similar)
                     if 'prompt' in data and isinstance(data['prompt'], dict):
                         return data
-                except:
+                except Exception as _caught:
+                    _note_error(_caught, "Eric_png_metadata_extractor_node_v3.py:242")
                     pass
                     
             return {}
@@ -297,7 +308,8 @@ class PngMetadataExtractorNodeV3:
                 if isinstance(workflow, str):
                     try:
                         return json.loads(workflow)
-                    except:
+                    except Exception as _caught:
+                        _note_error(_caught, "Eric_png_metadata_extractor_node_v3.py:300")
                         pass
                         
                 # If workflow is already a dict/object, return it

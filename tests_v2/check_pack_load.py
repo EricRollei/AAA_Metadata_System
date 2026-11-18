@@ -1,0 +1,184 @@
+"""
+check_pack_load.py
+Loads the whole pack the way ComfyUI does (CPU only, no server) and checks:
+  * every node module loads (no "Error loading node module")
+  * every node sits under "Eric's Nodes/...", superseded ones under Deprecated
+  * Save True SVG v2, Save Qwen Layers v2 and the file extractors work on real files
+
+    python tests_v2/check_pack_load.py
+
+Author: Eric Hiss (GitHub: EricRollei)
+License: Dual License (CC BY-NC 4.0 / Commercial) - see LICENSE
+"""
+
+import contextlib
+import importlib
+import io
+import os
+import sys
+import tempfile
+import traceback
+import xml.etree.ElementTree as ET
+
+PACK = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+COMFY = os.path.dirname(os.path.dirname(PACK))
+sys.path.insert(0, COMFY)
+sys.argv = [sys.argv[0], "--cpu"]
+
+SVG = '''<?xml version="1.0" encoding="UTF-8"?>
+<!-- word cloud -->
+<svg xmlns="http://www.w3.org/2000/svg" width="200" height="80" viewBox="0 0 200 80">
+<style><![CDATA[ .a > .b { fill: red; } ]]></style>
+<text x="10" y="40" xml:space="preserve">Hello <tspan fill="red">big</tspan> <tspan>world</tspan></text>
+</svg>'''
+
+
+def main() -> int:
+    import comfy.options
+    comfy.options.enable_args_parsing()
+    import torch
+    buffer = io.StringIO()
+    with contextlib.redirect_stdout(buffer):
+        pack = importlib.import_module(f"custom_nodes.{os.path.basename(PACK)}")
+    startup = buffer.getvalue().splitlines()
+    errors = [line for line in startup if "Error loading node module" in line or "not applied" in line
+              or "not installed" in line]
+    ok = not errors
+    print(f"start-up: {len(startup)} console lines, {len(pack.NODE_CLASS_MAPPINGS)} nodes, load errors: {len(errors)}")
+    for line in errors:
+        print("   ", line[:300])
+
+    sys.path.insert(0, PACK)
+    from aaa_meta.categories import ROOT
+    from aaa_meta.deprecation import DEPRECATED_CATEGORY, SUPERSEDED
+    from aaa_meta.reader import read_file
+    from aaa_meta.verify import read_tags
+    outside = {node_id: getattr(cls, "CATEGORY", None) for node_id, cls in pack.NODE_CLASS_MAPPINGS.items()
+               if not str(getattr(cls, "CATEGORY", "")).startswith(ROOT)}
+    marked = [old for old in SUPERSEDED if old in pack.NODE_CLASS_MAPPINGS
+              and pack.NODE_CLASS_MAPPINGS[old].CATEGORY == DEPRECATED_CATEGORY
+              and pack.NODE_DISPLAY_NAME_MAPPINGS.get(old, "").endswith("(deprecated)")]
+    dragged = [new for new in SUPERSEDED.values() if new in pack.NODE_CLASS_MAPPINGS
+               and pack.NODE_CLASS_MAPPINGS[new].CATEGORY == DEPRECATED_CATEGORY]
+    present = [old for old in SUPERSEDED if old in pack.NODE_CLASS_MAPPINGS and SUPERSEDED[old] in pack.NODE_CLASS_MAPPINGS]
+    good = not outside and len(marked) == len(present) and not dragged
+    ok = ok and good
+    print(f"categories: outside the tree={outside} deprecated marked={len(marked)}/{len(present)} "
+          f"new nodes wrongly in Deprecated={dragged}")
+    tree = {}
+    for node_id, cls in pack.NODE_CLASS_MAPPINGS.items():
+        tree.setdefault(cls.CATEGORY, []).append(node_id)
+    for category in sorted(tree):
+        print(f"   {category}: {len(tree[category])}")
+
+    nodes = pack.NODE_CLASS_MAPPINGS
+    prompt = {
+        "1": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": "testModel_v1.safetensors"}},
+        "2": {"class_type": "CLIPTextEncode", "inputs": {"text": "a zqpack lighthouse in fog", "clip": ["1", 1]}},
+        "3": {"class_type": "CLIPTextEncode", "inputs": {"text": "zqneg blurry", "clip": ["1", 1]}},
+        "4": {"class_type": "EmptyLatentImage", "inputs": {"width": 128, "height": 96, "batch_size": 1}},
+        "5": {"class_type": "KSampler", "inputs": {"model": ["1", 0], "positive": ["2", 0], "negative": ["3", 0],
+                                                    "latent_image": ["4", 0], "seed": 4242, "steps": 9, "cfg": 3.5,
+                                                    "sampler_name": "euler", "scheduler": "normal", "denoise": 1.0}},
+        "6": {"class_type": "VAEDecode", "inputs": {"samples": ["5", 0], "vae": ["1", 2]}},
+        "9": {"class_type": "SaveImage", "inputs": {"images": ["6", 0]}},
+    }
+    with tempfile.TemporaryDirectory() as folder:
+        # ---- Save True SVG v2
+        try:
+            saver = nodes["EricSaveTrueSVGImage_V2"]()
+            path, summary = saver.save_svg_with_metadata(
+                SVG, filename_prefix="svgcheck", custom_output_directory=os.path.join(folder, "svg"),
+                output_path_mode="Absolute Path", title="Cloud & <title>", keywords="zqsvg, cloud", creator="Eric Hiss",
+                custom_metadata='{"my key!": "v", "1bad": "x"}', save_xmp=True, save_workflow_as_json=False)
+            text = open(path, encoding="utf-8").read()
+            root = ET.fromstring(text.split("?>", 1)[1])
+            tags = read_tags(path) or {}
+            good = ('Hello <tspan fill="red">big</tspan> <tspan>world</tspan>' in text and "<![CDATA[" in text
+                    and "<!-- word cloud -->" in text and root[0].tag.endswith("metadata")
+                    and "zqsvg" in str(tags.get("XMP-dc:Subject")) and "Cloud" in str(tags.get("XMP-dc:Title"))
+                    and os.path.isfile(os.path.splitext(path)[0] + ".xmp"))
+            ok = ok and good
+            print(f"Save True SVG v2: ok={good} title={tags.get('XMP-dc:Title')!r} keywords={tags.get('XMP-dc:Subject')}")
+            if not good:
+                print("   ", summary[:300], "|", sorted(k for k in tags if k.startswith("XMP"))[:8])
+        except Exception:
+            ok = False
+            print(f"Save True SVG v2: EXCEPTION\n{traceback.format_exc()[-1500:]}")
+
+        # ---- Save Qwen Layers v2
+        try:
+            layer_node = nodes["EricSaveQwenLayers_V2"]()
+            layers = torch.rand(3, 96, 128, 4)
+            for file_format in ("psd", "tiff"):
+                output = layer_node.save_layers(layers, "layercheck", file_format, layer_names="Sky, Hill, Boat",
+                                                blend_modes="normal, multiply, screen", opacities="255, 200, 128",
+                                                custom_output_directory=os.path.join(folder, "layers_" + file_format),
+                                                prompt=prompt, unique_id="9")
+                path, summary = output[0], output[3]
+                parsed = read_file(path)
+                good = (parsed["standard"].get("description") == "a zqpack lighthouse in fog"
+                        and "testModel_v1" in parsed["standard"].get("keywords", []) and "metadata verified" in summary)
+                if file_format == "tiff":
+                    from aaa_meta import psd_writer
+                    stack = psd_writer.read_tiff_layers(path)
+                    names = [layer["name"] for layer in stack]
+                    good = good and sorted(names) == ["Boat", "Hill", "Sky"] and "Photoshop layers added" in summary
+                    print(f"   tiff layers: {[(l['name'], l['blend'], l['opacity']) for l in stack]}")
+                ok = ok and good
+                print(f"Save Qwen Layers v2 {file_format}: ok={good}")
+                if not good:
+                    print("   ", summary[:500])
+        except Exception:
+            ok = False
+            print(f"Save Qwen Layers v2: EXCEPTION\n{traceback.format_exc()[-1500:]}")
+
+        # ---- file extractors: a v2-saved PNG (stored record) and an old-style PNG (workflow only)
+        try:
+            import json
+            from PIL import Image
+            from PIL.PngImagePlugin import PngInfo
+            types = nodes["MetadataAwareSaveImage_v100"].INPUT_TYPES()
+            defaults = {}
+            for section in ("required", "optional"):
+                for name, spec in types[section].items():
+                    options = spec[1] if isinstance(spec, tuple) and len(spec) > 1 and isinstance(spec[1], dict) else {}
+                    if "default" in options:
+                        defaults[name] = options["default"]
+            defaults.pop("filename_prefix", None)
+            defaults["custom_output_directory"] = os.path.join(folder, "png")
+            prompt_v100 = dict(prompt)
+            prompt_v100["9"] = {"class_type": "MetadataAwareSaveImage_v100", "inputs": {"images": ["6", 0]}}
+            new_png = nodes["MetadataAwareSaveImage_v100"]().save_with_metadata(
+                torch.rand(1, 96, 128, 3), filename_prefix="extract", prompt=prompt_v100,
+                extra_pnginfo={"workflow": {"nodes": []}}, unique_id="9", **defaults)["result"][1]
+            old_png = os.path.join(folder, "old.png")
+            info = PngInfo()
+            info.add_text("prompt", json.dumps(prompt))
+            Image.new("RGB", (64, 64)).save(old_png, pnginfo=info)
+            for label, path, origin in (("stored record", new_png, "stored"), ("old PNG", old_png, "workflow graph")):
+                metadata, _json_text, summary = nodes["PngMetadataExtractorV4"]().extract_metadata(path)
+                diag_info, _name, diag = nodes["PngInfoDiagnosticV4"]().diagnose_png(path)
+                record = metadata.get("generation_record", {})
+                good = (metadata.get("generation_source") == origin and record.get("positive") == "a zqpack lighthouse in fog"
+                        and record.get("negative") == "zqneg blurry" and "Generation record" in summary
+                        and diag.get("generation_source") == origin and "Generation record" in diag_info)
+                ok = ok and good
+                print(f"extractors on {label}: ok={good} source={metadata.get('generation_source')!r}")
+                if not good:
+                    print("   ", summary[-300:])
+        except Exception:
+            ok = False
+            print(f"file extractors: EXCEPTION\n{traceback.format_exc()[-1500:]}")
+
+    previews = os.path.join(COMFY, "output", "node_previews")
+    if os.path.isdir(previews):
+        for name in os.listdir(previews):
+            if name.startswith("extract_"):
+                os.remove(os.path.join(previews, name))
+    print("PACK OK" if ok else "PACK PROBLEM")
+    return 0 if ok else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

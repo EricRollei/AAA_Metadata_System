@@ -468,3 +468,28 @@ Fix: for older PNGs the plugin now uses a bundled copy of the graph core (`aaa_g
 models, record, builder) and traces back from the save node; the old parser remains as fallback and for the
 keyword list. When aaa_meta's builder changes, copy those five files into the plugin's `aaa_graph/` again.
 Tested on the 16 fixture graphs and a classic KSampler graph; not on Eric's file (not found on disk here).
+
+## Update 2026-11-17 (evening) - Phase 6 options A-F
+
+Eric approved A, C, D, E, F and "fix Save True SVG if it is not working correctly"; testers, word cloud and crop
+nodes are left alone.
+
+- A quiet console: `aaa_meta/console.py`. 29 node files got one import block (print -> quiet_print): problems are
+  always shown, the rest only with the node's debug option on or AAA_META_VERBOSE=1. Pack start-up went from
+  50+ console lines to 2. Not covered: the `eric_metadata` service's own log lines.
+- D: 60 bare `except:` in those files are now `except Exception as _caught:` + `_note_error(...)` (shown in verbose mode).
+- E: `aaa_meta/categories.py`, applied from `__init__`: every node under "Eric's Nodes/..." (Color, Crop & Compose,
+  Files, Input, Loaders/..., Metadata, Output, Size & Aspect, Text, Tools, Workflow, Deprecated).
+  AAA_META_KEEP_OLD_CATEGORIES=1 restores the old menus. Note: the Phase 6 review's category survey was wrong
+  (regex cut "Eric's Nodes" at the apostrophe); many nodes were already in that tree.
+- B: Save True SVG was defective: re-serialising the SVG re-indented <text> (changes spacing), dropped comments,
+  renamed namespace prefixes, and a custom_metadata key that is not an XML name produced an unreadable file.
+  `EricSaveTrueSVGImage_V2`: metadata inserted as text, RDF/XMP that exiftool reads as dc:title / dc:subject...
+  `EricSaveQwenLayers_V2`: generation record in PSD / TIFF, Photoshop layers in TIFF.
+- C: `nodes/eric_file_extractors_v2.py`: PngMetadataExtractorV4, PngInfoDiagnosticV4, SplitWorkflowExtractorNode_V3,
+  Eric_Workflow_Toolkit_v3, EricCivitaiPromptExtractor_V2 (+AutoLoader_V2) - stored record first, else rebuilt from
+  the workflow graph (`load_support.file_generation`).
+- F: deprecated labels for the superseded versions above and for FileOrganizer (v01). Not marked (not clearly
+  superseded): duplicate finder v05 vs fast finder, Multi-LoRA v02 vs Model-Only.
+- Checks: unit tests 23; new `tests_v2/check_pack_load.py` (whole pack loads, 81 nodes, 0 load errors, category
+  tree, SVG v2, Qwen layers v2, extractors) PACK OK; NODE OK; COMPANIONS OK.

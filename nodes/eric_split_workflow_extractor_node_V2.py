@@ -22,6 +22,14 @@ INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
 PARTICULAR PURPOSE AND NONINFRINGEMENT.
 """
 
+# Console output goes through one switch (see aaa_meta/console.py): problems are always shown,
+# everything else only with the node's debug option on or AAA_META_VERBOSE=1.
+try:
+    from ..aaa_meta.console import quiet_print as print, note_error as _note_error
+except Exception:                                    # used outside the pack
+    def _note_error(error, where=""):
+        pass
+
 import os
 import json
 import torch
@@ -118,7 +126,8 @@ class SplitWorkflowExtractorNode_V2:
                         parameters = img.info['parameters']
                         if debug_logging:
                             print("[WorkflowExtractor] Found 'parameters' field")
-                    except:
+                    except Exception as _caught:
+                        _note_error(_caught, "eric_split_workflow_extractor_node_V2.py:121")
                         parameters = None
             
             # Handle the case where we don't have both parts

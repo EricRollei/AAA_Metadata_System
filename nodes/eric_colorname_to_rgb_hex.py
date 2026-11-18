@@ -29,6 +29,14 @@ This code depends on several third-party libraries, each with its own license:
 
 """
 
+# Console output goes through one switch (see aaa_meta/console.py): problems are always shown,
+# everything else only with the node's debug option on or AAA_META_VERBOSE=1.
+try:
+    from ..aaa_meta.console import quiet_print as print, note_error as _note_error
+except Exception:                                    # used outside the pack
+    def _note_error(error, where=""):
+        pass
+
 import torch
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
@@ -95,7 +103,8 @@ class ColorNameToRGBNode:
                     if os.path.exists(font_path):
                         system_font = ImageFont.truetype(font_path, font_size)
                 # Add other OS font paths as needed
-            except:
+            except Exception as _caught:
+                _note_error(_caught, "eric_colorname_to_rgb_hex.py:98")
                 pass
                 
             if system_font is None:
@@ -116,8 +125,9 @@ class ColorNameToRGBNode:
                 
             # Draw the text
             draw.text((3, text_y + 2), display_text, fill=(255, 255, 255, 255), font=system_font)
-        except:
+        except Exception as _caught:
             # If text rendering fails, just show the color swatch
+            _note_error(_caught, "eric_colorname_to_rgb_hex.py:119")
             pass
         
         # Convert to tensor for ComfyUI
@@ -148,7 +158,8 @@ class ColorNameToRGBNode:
                     b = int(color_name[5:7], 16)
                     a = int(color_name[7:9], 16)
                     return (r, g, b, a)
-            except:
+            except Exception as _caught:
+                _note_error(_caught, "eric_colorname_to_rgb_hex.py:151")
                 pass
         
         # Check if it's in our color names dictionary

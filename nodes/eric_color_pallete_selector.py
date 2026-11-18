@@ -26,6 +26,14 @@ colorsys, numpy, PIL (Pillow), torch
 
 """
 
+# Console output goes through one switch (see aaa_meta/console.py): problems are always shown,
+# everything else only with the node's debug option on or AAA_META_VERBOSE=1.
+try:
+    from ..aaa_meta.console import quiet_print as print, note_error as _note_error
+except Exception:                                    # used outside the pack
+    def _note_error(error, where=""):
+        pass
+
 import torch
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
@@ -159,7 +167,8 @@ class CulturalColorPaletteGeneratorNode:
                     g = int(color_name[3:5], 16)
                     b = int(color_name[5:7], 16)
                     return (r, g, b)
-            except:
+            except Exception as _caught:
+                _note_error(_caught, "eric_color_pallete_selector.py:162")
                 pass
         
         # Check if it's in our color names dictionary
@@ -199,7 +208,8 @@ class CulturalColorPaletteGeneratorNode:
                         g = int(hex_code[2:4], 16)
                         b = int(hex_code[4:6], 16)
                         cultural_colors.append((r, g, b))
-                    except:
+                    except Exception as _caught:
+                        _note_error(_caught, "eric_color_pallete_selector.py:202")
                         pass
                 break
         
@@ -505,13 +515,15 @@ class CulturalColorPaletteGeneratorNode:
                 if os.path.exists(font_path):
                     font = ImageFont.truetype(font_path, font_size)
             # Add other OS font paths here
-        except:
+        except Exception as _caught:
+            _note_error(_caught, "eric_color_pallete_selector.py:508")
             pass
             
         if font is None:
             try:
                 font = ImageFont.load_default()
-            except:
+            except Exception as _caught:
+                _note_error(_caught, "eric_color_pallete_selector.py:514")
                 pass
     
         # Draw each color swatch
@@ -670,13 +682,15 @@ class CulturalColorPaletteGeneratorNode:
                 if os.path.exists(font_path):
                     font = ImageFont.truetype(font_path, font_size)
             # Add other OS font paths here
-        except:
+        except Exception as _caught:
+            _note_error(_caught, "eric_color_pallete_selector.py:673")
             pass
             
         if font is None:
             try:
                 font = ImageFont.load_default()
-            except:
+            except Exception as _caught:
+                _note_error(_caught, "eric_color_pallete_selector.py:679")
                 pass
         
         # Sort colors by hue for a better visual representation

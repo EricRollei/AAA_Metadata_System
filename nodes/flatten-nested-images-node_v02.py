@@ -20,6 +20,14 @@ Date: [October 2025]
 License: Dual License (Non-Commercial and Commercial Use)
 """
 
+# Console output goes through one switch (see aaa_meta/console.py): problems are always shown,
+# everything else only with the node's debug option on or AAA_META_VERBOSE=1.
+try:
+    from ..aaa_meta.console import quiet_print as print, note_error as _note_error
+except Exception:                                    # used outside the pack
+    def _note_error(error, where=""):
+        pass
+
 import os
 import shutil
 from pathlib import Path
@@ -286,11 +294,13 @@ class FlattenNestedFiles:
                         if has_files:
                             has_actual_organization = True
                             break
-                    except:
+                    except Exception as _caught:
+                        _note_error(_caught, "flatten-nested-images-node_v02.py:289")
                         continue
                 
                 return has_actual_organization
-            except:
+            except Exception as _caught:
+                _note_error(_caught, "flatten-nested-images-node_v02.py:293")
                 return False
         
         def scan_folder(folder_path, current_depth=0):
@@ -671,7 +681,8 @@ class FlattenNestedFiles:
                     dir_path.rmdir()
                     removed_count += 1
                     log_messages.append(f"  Removed empty: {dir_path.name}")
-            except:
+            except Exception as _caught:
+                _note_error(_caught, "flatten-nested-images-node_v02.py:674")
                 pass
         
         return removed_count
@@ -688,7 +699,8 @@ class FlattenNestedFiles:
                     try:
                         if not any(dir_path.iterdir()):
                             empty_dirs.append(dir_path)
-                    except:
+                    except Exception as _caught:
+                        _note_error(_caught, "flatten-nested-images-node_v02.py:691")
                         pass
         
         return empty_dirs

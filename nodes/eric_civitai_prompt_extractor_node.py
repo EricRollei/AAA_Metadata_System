@@ -21,6 +21,14 @@ INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
 PARTICULAR PURPOSE AND NONINFRINGEMENT.
 """
 
+# Console output goes through one switch (see aaa_meta/console.py): problems are always shown,
+# everything else only with the node's debug option on or AAA_META_VERBOSE=1.
+try:
+    from ..aaa_meta.console import quiet_print as print, note_error as _note_error
+except Exception:                                    # used outside the pack
+    def _note_error(error, where=""):
+        pass
+
 import hashlib
 import json
 import os
@@ -1380,8 +1388,9 @@ class EricCivitaiPromptExtractorAutoLoader(EricCivitaiPromptExtractor):
             try:
                 dirs = folder_paths.get_folder_paths(folder_type)
                 search_dirs.extend(dirs)
-            except:
+            except Exception as _caught:
                 # Folder type might not exist in this ComfyUI setup
+                _note_error(_caught, "eric_civitai_prompt_extractor_node.py:1383")
                 pass
         
         for base_dir in search_dirs:

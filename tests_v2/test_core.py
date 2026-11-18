@@ -628,6 +628,69 @@ def test_deprecation_labels_and_tiff_layer_reading():
     assert psd_writer.parse_tiff_block(b"not a block", 10, 14) == []
 
 
+def test_svg_metadata_categories_and_console():
+    import contextlib
+    import io
+    import xml.etree.ElementTree as ET
+    from aaa_meta import categories, console
+    from aaa_meta.fields import UserFields, build_standard_fields
+    from aaa_meta.record import GenerationRecord
+    from aaa_meta.svg_meta import embed_xmp
+    from aaa_meta.xmp_packet import build_packet
+    svg = ('<?xml version="1.0"?>\n<!-- c -->\n<svg xmlns="http://www.w3.org/2000/svg" data-x="a>b">\n'
+           '<style><![CDATA[ .a > .b {} ]]></style>\n<text xml:space="preserve">A <tspan>b</tspan> <tspan>c</tspan></text>\n</svg>')
+    user = UserFields(title="T & <x>", keywords=["k1"], custom={"my key!": "v", "1bad": "x"})
+    packet = build_packet(build_standard_fields(GenerationRecord(), user), None, custom=user.custom)
+    out, done = embed_xmp(svg, packet)
+    assert done and out.count("<metadata>") == 1
+    start, end = out.index("<metadata>"), out.index("</metadata>") + len("</metadata>")
+    assert out[:start] + out[end:] == svg.replace('data-x="a>b">', 'data-x="a>b">\n')     # nothing else touched
+    ET.fromstring(out.split("?>", 1)[1])                                                    # still well-formed
+    again, _ = embed_xmp(out, packet)
+    assert again.count("<metadata>") == 1
+    assert embed_xmp("<html></html>", packet) == ("<html></html>", False)
+
+    class Old:
+        CATEGORY = "image/text"
+
+    class New(Old):
+        pass
+
+    class Kept:
+        CATEGORY = "Eric's Nodes/Metadata"
+
+    class Unknown:
+        CATEGORY = "somewhere/else"
+
+    classes = {"TextOverlayNode_v04": Old, "TextOverlay_next": New, "K": Kept, "U": Unknown, "QwenAspectRatioHelper": type("Q", (), {"CATEGORY": "loaders/multi-lora/qwen"})}
+    moved = categories.apply(classes)
+    assert Old.CATEGORY == New.CATEGORY == "Eric's Nodes/Text" and Kept.CATEGORY == "Eric's Nodes/Metadata"
+    assert Unknown.CATEGORY == "Eric's Nodes/Other" and classes["QwenAspectRatioHelper"].CATEGORY == "Eric's Nodes/Size & Aspect"
+    assert "K" not in moved and "U" in moved
+
+    def captured(function):
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            function()
+        return buffer.getvalue()
+
+    def chatter():
+        console.quiet_print("Loaded 1327 colours")
+
+    def problem():
+        console.quiet_print("[X] Error: file missing")
+
+    def debugging(debug_logging=True):
+        console.quiet_print("step 3")
+
+    assert captured(chatter) == "" and "Error" in captured(problem) and "step 3" in captured(debugging)
+    console.set_verbose(True)
+    try:
+        assert "1327" in captured(chatter)
+    finally:
+        console.set_verbose(False)
+
+
 if __name__ == "__main__":
     failed = 0
     for name, func in sorted(globals().items()):

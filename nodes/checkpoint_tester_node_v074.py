@@ -30,6 +30,14 @@ PARTICULAR PURPOSE AND NONINFRINGEMENT.
 
 """
 
+# Console output goes through one switch (see aaa_meta/console.py): problems are always shown,
+# everything else only with the node's debug option on or AAA_META_VERBOSE=1.
+try:
+    from ..aaa_meta.console import quiet_print as print, note_error as _note_error
+except Exception:                                    # used outside the pack
+    def _note_error(error, where=""):
+        pass
+
 import os
 import re
 import json
@@ -1073,7 +1081,8 @@ class CheckpointTesterNode(BaseCheckpointNode):
                 clip_path = folder_paths.get_full_path(folder_type, clip_name)
                 if clip_path:
                     break
-            except:
+            except Exception as _caught:
+                _note_error(_caught, "checkpoint_tester_node_v074.py:1076")
                 continue
 
         if not clip_path:
@@ -1136,7 +1145,8 @@ class CheckpointTesterNode(BaseCheckpointNode):
             try:
                 from comfy.sd import CLIPType
                 return CLIPType.STABLE_DIFFUSION
-            except:
+            except Exception as _caught:
+                _note_error(_caught, "checkpoint_tester_node_v074.py:1139")
                 return 1  # Fallback to the integer value we saw
 
     def _load_t5_clip(self, clip_path: str, architecture: str, t5_bit_depth: str) -> Optional[Any]:
@@ -1221,7 +1231,8 @@ class CheckpointTesterNode(BaseCheckpointNode):
                         try:
                             clip_path = folder_paths.get_full_path_or_raise(folder_type, clip_name)
                             break
-                        except:
+                        except Exception as _caught:
+                            _note_error(_caught, "checkpoint_tester_node_v074.py:1224")
                             continue
                     
                     if clip_path:
@@ -1673,7 +1684,8 @@ class CheckpointTesterNode(BaseCheckpointNode):
             model_path = folder_paths.get_full_path(model_dir_type, model_name)
             print(f"[CheckpointTester] Found Flux model in {model_dir_type}: {model_path}")
             return model_path
-        except:
+        except Exception as _caught:
+            _note_error(_caught, "checkpoint_tester_node_v074.py:1676")
             pass
         
         # Try common fallback locations
@@ -1684,7 +1696,8 @@ class CheckpointTesterNode(BaseCheckpointNode):
                     model_path = folder_paths.get_full_path(fallback_type, model_name)
                     print(f"[CheckpointTester] Found Flux model in {fallback_type}: {model_path}")
                     return model_path
-                except:
+                except Exception as _caught:
+                    _note_error(_caught, "checkpoint_tester_node_v074.py:1687")
                     continue
         
         print(f"[CheckpointTester] ERROR: Could not resolve path for Flux model {model_name}")

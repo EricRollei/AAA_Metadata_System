@@ -31,6 +31,14 @@ This code depends on several third-party libraries, each with its own license:
 
 """
 
+# Console output goes through one switch (see aaa_meta/console.py): problems are always shown,
+# everything else only with the node's debug option on or AAA_META_VERBOSE=1.
+try:
+    from ..aaa_meta.console import quiet_print as print, note_error as _note_error
+except Exception:                                    # used outside the pack
+    def _note_error(error, where=""):
+        pass
+
 import torch
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont, ImageColor, ImageFilter, ImageChops
@@ -194,7 +202,8 @@ class TextOverlayNode:
                 font = ImageFont.truetype(font_name, size)
                 self.fonts_cache[cache_key] = font
                 return font
-            except:
+            except Exception as _caught:
+                _note_error(_caught, "text-overlay-node_v04.py:197")
                 pass
             
             # Final fallback: use default font
@@ -206,7 +215,8 @@ class TextOverlayNode:
                             font = ImageFont.truetype(os.path.join(os.environ["WINDIR"], "Fonts", fallback), size)
                             self.fonts_cache[cache_key] = font
                             return font
-                        except:
+                        except Exception as _caught:
+                            _note_error(_caught, "text-overlay-node_v04.py:209")
                             continue
                 elif sys.platform == "darwin":  # macOS
                     for fallback in [
@@ -219,7 +229,8 @@ class TextOverlayNode:
                             font = ImageFont.truetype(fallback, size)
                             self.fonts_cache[cache_key] = font
                             return font
-                        except:
+                        except Exception as _caught:
+                            _note_error(_caught, "text-overlay-node_v04.py:222")
                             continue
                 else:  # Linux and others
                     # Try common Linux font locations with more options
@@ -235,9 +246,11 @@ class TextOverlayNode:
                                 font = ImageFont.truetype(fallback, size)
                                 self.fonts_cache[cache_key] = font
                                 return font
-                            except:
+                            except Exception as _caught:
+                                _note_error(_caught, "text-overlay-node_v04.py:238")
                                 continue
-            except:
+            except Exception as _caught:
+                _note_error(_caught, "text-overlay-node_v04.py:240")
                 pass
             
             # Last resort: use PIL's default font

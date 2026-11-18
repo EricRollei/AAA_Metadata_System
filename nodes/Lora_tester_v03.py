@@ -24,6 +24,14 @@ INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
 PARTICULAR PURPOSE AND NONINFRINGEMENT.
 """
 
+# Console output goes through one switch (see aaa_meta/console.py): problems are always shown,
+# everything else only with the node's debug option on or AAA_META_VERBOSE=1.
+try:
+    from ..aaa_meta.console import quiet_print as print, note_error as _note_error
+except Exception:                                    # used outside the pack
+    def _note_error(error, where=""):
+        pass
+
 import os
 import re
 import json
@@ -501,8 +509,9 @@ class LoRATesterNode:
                 hasher.update(f.read(1024 * 1024))
                 
             return hasher.hexdigest()
-        except:
+        except Exception as _caught:
             # If any error occurs, fall back to just using the path as an identifier
+            _note_error(_caught, "Lora_tester_v03.py:504")
             return hashlib.md5(file_path.encode('utf-8')).hexdigest()
 
     def scan_loras(self, additional_path: str = ""):
@@ -1353,7 +1362,8 @@ class LoRAInfoSetterNode:
             with open(file_path, 'rb') as f:
                 hasher.update(f.read(1024 * 1024))
             return hasher.hexdigest()
-        except:
+        except Exception as _caught:
+            _note_error(_caught, "Lora_tester_v03.py:1356")
             return hashlib.md5(file_path.encode('utf-8')).hexdigest()
             
     def _save_lora_db(self):
@@ -1527,7 +1537,8 @@ class LoRABatchInfoSetterNode:
             with open(file_path, 'rb') as f:
                 hasher.update(f.read(1024 * 1024))
             return hasher.hexdigest()
-        except:
+        except Exception as _caught:
+            _note_error(_caught, "Lora_tester_v03.py:1530")
             return hashlib.md5(file_path.encode('utf-8')).hexdigest()
     
     def batch_set_info(self, dir_path: str, architecture: str, category: str, 
@@ -1662,7 +1673,8 @@ class LoRAParamsLoaderNode:
             with open(file_path, 'rb') as f:
                 hasher.update(f.read(1024 * 1024))
             return hasher.hexdigest()
-        except:
+        except Exception as _caught:
+            _note_error(_caught, "Lora_tester_v03.py:1665")
             return hashlib.md5(file_path.encode('utf-8')).hexdigest()
     
     def load_params(self, lora_path: str) -> Tuple[str, str, float, float, str, str]:
@@ -1839,7 +1851,8 @@ class LoRAInfoViewerNode:
             with open(file_path, 'rb') as f:
                 hasher.update(f.read(1024 * 1024))
             return hasher.hexdigest()
-        except:
+        except Exception as _caught:
+            _note_error(_caught, "Lora_tester_v03.py:1842")
             return hashlib.md5(file_path.encode('utf-8'))
             
     def view_info(self, lora_path: str) -> Tuple[str, str, str, str, str, str, torch.Tensor]:
@@ -2025,7 +2038,8 @@ class TriggerWordManagerNode:
             with open(file_path, 'rb') as f:
                 hasher.update(f.read(1024 * 1024))
             return hasher.hexdigest()
-        except:
+        except Exception as _caught:
+            _note_error(_caught, "Lora_tester_v03.py:2028")
             return hashlib.md5(file_path.encode('utf-8')).hexdigest()
     
     def _calculate_sha256(self, file_path: str) -> str:
@@ -2245,7 +2259,8 @@ class LoRAQuickFeedbackNode:
             with open(file_path, 'rb') as f:
                 hasher.update(f.read(1024 * 1024))
             return hasher.hexdigest()
-        except:
+        except Exception as _caught:
+            _note_error(_caught, "Lora_tester_v03.py:2248")
             return hashlib.md5(file_path.encode('utf-8')).hexdigest()
     
     def _rating_to_stars(self, rating: int) -> str:
@@ -2493,7 +2508,8 @@ class LoRAGalleryDisplayNode:
             with open(file_path, 'rb') as f:
                 hasher.update(f.read(1024 * 1024))
             return hasher.hexdigest()
-        except:
+        except Exception as _caught:
+            _note_error(_caught, "Lora_tester_v03.py:2496")
             return hashlib.md5(file_path.encode('utf-8')).hexdigest()
     
     def _find_associated_images(self, lora_path: str) -> List[str]:
@@ -3876,7 +3892,8 @@ class LoRAGalleryWithEditNode:
             with open(file_path, 'rb') as f:
                 hasher.update(f.read(1024 * 1024))
             return hasher.hexdigest()
-        except:
+        except Exception as _caught:
+            _note_error(_caught, "Lora_tester_v03.py:3879")
             return hashlib.md5(file_path.encode('utf-8')).hexdigest()
     
     def _find_associated_images(self, lora_path: str) -> List[str]:

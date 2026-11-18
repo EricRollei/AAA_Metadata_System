@@ -35,6 +35,14 @@ Analyzes dominant colors, color harmonies, and palette characteristics in images
 Integrates with the metadata system to store color analysis results.
 """
 
+# Console output goes through one switch (see aaa_meta/console.py): problems are always shown,
+# everything else only with the node's debug option on or AAA_META_VERBOSE=1.
+try:
+    from ..aaa_meta.console import quiet_print as print, note_error as _note_error
+except Exception:                                    # used outside the pack
+    def _note_error(error, where=""):
+        pass
+
 import os
 import sys  # Add this import since you use sys.path.append
 import math

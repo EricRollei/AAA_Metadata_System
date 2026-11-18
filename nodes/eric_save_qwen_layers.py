@@ -32,6 +32,14 @@ Designed for use with:
 - Any workflow that produces multiple RGBA layers from a single image
 """
 
+# Console output goes through one switch (see aaa_meta/console.py): problems are always shown,
+# everything else only with the node's debug option on or AAA_META_VERBOSE=1.
+try:
+    from ..aaa_meta.console import quiet_print as print, note_error as _note_error
+except Exception:                                    # used outside the pack
+    def _note_error(error, where=""):
+        pass
+
 import os
 import json
 import datetime
@@ -769,7 +777,8 @@ class EricSaveQwenLayers:
         try:
             font = ImageFont.truetype("arial.ttf", 12)
             font_small = ImageFont.truetype("arial.ttf", 10)
-        except:
+        except Exception as _caught:
+            _note_error(_caught, "eric_save_qwen_layers.py:772")
             font = ImageFont.load_default()
             font_small = font
         

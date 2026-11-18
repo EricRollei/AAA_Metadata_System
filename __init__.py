@@ -123,7 +123,8 @@ for file in os.listdir(nodes_dir):
         if hasattr(imported_module, 'NODE_DISPLAY_NAME_MAPPINGS'):
             NODE_DISPLAY_NAME_MAPPINGS.update(imported_module.NODE_DISPLAY_NAME_MAPPINGS)
             
-        print(f"Loaded node module: {name}")
+        if os.environ.get("AAA_META_VERBOSE", "").strip().lower() in ("1", "true", "yes", "on"):
+            print(f"Loaded node module: {name}")
     except Exception as e:
         print(f"Error loading node module {name}: {str(e)}")
 
@@ -131,6 +132,14 @@ for file in os.listdir(nodes_dir):
 __version__ = "0.1.0"
 
 # Add web directory for UI components if needed
+# v2: one menu tree for the whole pack, "Eric's Nodes/..." (AAA_META_KEEP_OLD_CATEGORIES=1 disables)
+try:
+    from .aaa_meta.categories import apply as _apply_category_tree
+    _apply_category_tree(NODE_CLASS_MAPPINGS)
+except Exception as _category_error:
+    print(f"[AAA Metadata] category tree not applied: {_category_error!r}")
+print(f"[AAA Metadata] {len(NODE_CLASS_MAPPINGS)} nodes loaded (set AAA_META_VERBOSE=1 for the full console output)")
+
 # v2: nodes that have a newer version get " (deprecated)" and the Deprecated category (AAA_META_KEEP_OLD_LABELS=1 disables)
 try:
     from .aaa_meta.deprecation import apply as _mark_deprecated

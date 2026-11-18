@@ -23,6 +23,14 @@ INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
 PARTICULAR PURPOSE AND NONINFRINGEMENT.
 """
 
+# Console output goes through one switch (see aaa_meta/console.py): problems are always shown,
+# everything else only with the node's debug option on or AAA_META_VERBOSE=1.
+try:
+    from ..aaa_meta.console import quiet_print as print, note_error as _note_error
+except Exception:                                    # used outside the pack
+    def _note_error(error, where=""):
+        pass
+
 import os
 import json
 import hashlib
@@ -248,8 +256,9 @@ class MultiLoRALoaderBase:
                 hasher.update(f.read(1024 * 1024))
                 
             return hasher.hexdigest()
-        except:
+        except Exception as _caught:
             # If any error occurs, fall back to just using the path as an identifier
+            _note_error(_caught, "Multi_LoRA_Loader_Base.py:251")
             return hashlib.md5(file_path.encode('utf-8')).hexdigest()
     
     def _detect_architecture_from_path(self, lora_path: str) -> str:
@@ -607,7 +616,8 @@ class MultiLoRALoaderBase:
                         rel_path = os.path.basename(lora_path)
                 else:
                     rel_path = lora_path
-            except:
+            except Exception as _caught:
+                _note_error(_caught, "Multi_LoRA_Loader_Base.py:610")
                 rel_path = os.path.basename(lora_path)
             
             lora_list.append(f"• {lora_name}")

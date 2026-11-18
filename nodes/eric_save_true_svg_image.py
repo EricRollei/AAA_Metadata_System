@@ -26,6 +26,14 @@ while preserving the full metadata system functionality from the main save image
 It's designed to handle true vector SVG content without raster-to-vector conversion.
 """
 
+# Console output goes through one switch (see aaa_meta/console.py): problems are always shown,
+# everything else only with the node's debug option on or AAA_META_VERBOSE=1.
+try:
+    from ..aaa_meta.console import quiet_print as print, note_error as _note_error
+except Exception:                                    # used outside the pack
+    def _note_error(error, where=""):
+        pass
+
 import json
 import datetime
 import os

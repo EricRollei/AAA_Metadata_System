@@ -25,6 +25,14 @@ Date: [February 2026]
 License: Dual License (Non-Commercial and Commercial Use)
 """
 
+# Console output goes through one switch (see aaa_meta/console.py): problems are always shown,
+# everything else only with the node's debug option on or AAA_META_VERBOSE=1.
+try:
+    from ..aaa_meta.console import quiet_print as print, note_error as _note_error
+except Exception:                                    # used outside the pack
+    def _note_error(error, where=""):
+        pass
+
 import os
 import sys
 import json
@@ -380,8 +388,9 @@ class ImageDuplicateFinder:
                                     file_info['width'] = int(width)
                                     file_info['height'] = int(height)
                                     file_info['pixel_count'] = int(width) * int(height)
-                                except:
+                                except Exception as _caught:
                                     # If dimensions parsing fails, we'll get them by opening the image
+                                    _note_error(_caught, "eric-duplicate-image-finder_v05.py:383")
                                     pass
                             
                             # If we have all the info we need, add to image_data and continue
@@ -443,7 +452,8 @@ class ImageDuplicateFinder:
                             file_info['is_grayscale'] = grayscale_count > sample_size * 0.95
                         else:
                             file_info['is_grayscale'] = False
-                    except:
+                    except Exception as _caught:
+                        _note_error(_caught, "eric-duplicate-image-finder_v05.py:446")
                         file_info['is_grayscale'] = False
                     
                     # Calculate primary hash
@@ -820,7 +830,8 @@ class ImageDuplicateFinder:
                 elif diff < 3600:
                     score += 0.1
                     weight_sum += 0.1
-            except:
+            except Exception as _caught:
+                _note_error(_caught, "eric-duplicate-image-finder_v05.py:823")
                 pass  # Skip date comparison if parsing fails
                 
         # Check if images share same AI generation seed
@@ -981,8 +992,9 @@ class ImageDuplicateFinder:
                 # Convert to binary array (64 bits)
                 bits = np.array([(hash_int >> i) & 1 for i in range(63, -1, -1)], dtype=np.uint8)
                 hash_arrays.append(bits)
-            except:
+            except Exception as _caught:
                 # Fallback for unusual hash formats
+                _note_error(_caught, "eric-duplicate-image-finder_v05.py:984")
                 hash_arrays.append(np.zeros(64, dtype=np.uint8))
         
         hash_matrix = np.array(hash_arrays, dtype=np.uint8)  # Shape: (n, 64)
@@ -999,7 +1011,8 @@ class ImageDuplicateFinder:
                     hash_int = int(hash_str, 16)
                     bits = np.array([(hash_int >> i) & 1 for i in range(63, -1, -1)], dtype=np.uint8)
                     sec_hash_arrays.append(bits)
-                except:
+                except Exception as _caught:
+                    _note_error(_caught, "eric-duplicate-image-finder_v05.py:1002")
                     sec_hash_arrays.append(np.zeros(64, dtype=np.uint8))
             sec_hash_matrix = np.array(sec_hash_arrays, dtype=np.uint8)
         

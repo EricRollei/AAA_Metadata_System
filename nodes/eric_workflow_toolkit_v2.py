@@ -42,6 +42,14 @@ Features:
 - Integration with the metadata system for proper storage
 """
 
+# Console output goes through one switch (see aaa_meta/console.py): problems are always shown,
+# everything else only with the node's debug option on or AAA_META_VERBOSE=1.
+try:
+    from ..aaa_meta.console import quiet_print as print, note_error as _note_error
+except Exception:                                    # used outside the pack
+    def _note_error(error, where=""):
+        pass
+
 import os
 import json
 import torch
@@ -266,7 +274,8 @@ class WorkflowToolkitNode:
             try:
                 import os
                 os.unlink(temp_filename)
-            except:
+            except Exception as _caught:
+                _note_error(_caught, "eric_workflow_toolkit_v2.py:269")
                 pass
                 
             # Check if extraction succeeded
@@ -352,7 +361,8 @@ class WorkflowToolkitNode:
             # Clean up temporary file
             try:
                 os.unlink(temp_filename)
-            except:
+            except Exception as _caught:
+                _note_error(_caught, "eric_workflow_toolkit_v2.py:355")
                 pass
                 
             return result

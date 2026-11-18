@@ -32,6 +32,14 @@ This code depends on several third-party libraries, each with its own license:
 
 """
 
+# Console output goes through one switch (see aaa_meta/console.py): problems are always shown,
+# everything else only with the node's debug option on or AAA_META_VERBOSE=1.
+try:
+    from ..aaa_meta.console import quiet_print as print, note_error as _note_error
+except Exception:                                    # used outside the pack
+    def _note_error(error, where=""):
+        pass
+
 import torch
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont, ImageColor
@@ -786,11 +794,13 @@ class EricsWordCloudNode:
         try:
             title_font = ImageFont.truetype("arial.ttf", 16)
             small_font = ImageFont.truetype("arial.ttf", 10)
-        except:
+        except Exception as _caught:
+            _note_error(_caught, "wordcloud_node.py:789")
             try:
                 title_font = ImageFont.load_default()
                 small_font = ImageFont.load_default()
-            except:
+            except Exception as _caught:
+                _note_error(_caught, "wordcloud_node.py:793")
                 title_font = small_font = None
             
         # Draw title
@@ -876,12 +886,14 @@ class EricsWordCloudNode:
             title_font = ImageFont.truetype("arial.ttf", 28)
             subtitle_font = ImageFont.truetype("arial.ttf", 18)
             name_font = ImageFont.truetype("arial.ttf", font_name_size)
-        except:
+        except Exception as _caught:
+            _note_error(_caught, "wordcloud_node.py:879")
             try:
                 title_font = ImageFont.load_default()
                 subtitle_font = ImageFont.load_default()
                 name_font = ImageFont.load_default()
-            except:
+            except Exception as _caught:
+                _note_error(_caught, "wordcloud_node.py:884")
                 title_font = subtitle_font = name_font = None
         
         # Draw header
@@ -958,8 +970,9 @@ class EricsWordCloudNode:
                                 draw.text((col_x, sample_y), ascii_text, fill=(20, 20, 20), font=sample_font)
                             else:
                                 draw.text((col_x, sample_y), "Sample Text", fill=(20, 20, 20), font=sample_font)
-                        except:
+                        except Exception as _caught:
                             # If all else fails, use default font
+                            _note_error(_caught, "wordcloud_node.py:961")
                             draw.text((col_x, sample_y), display_text, fill=(20, 20, 20), font=name_font)
                             # Add indicator that font failed
                             draw.text((col_x + column_width - 60, sample_y), "[unsupported]", fill=(200, 100, 100), font=name_font)

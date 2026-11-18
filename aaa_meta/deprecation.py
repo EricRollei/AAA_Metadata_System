@@ -28,6 +28,15 @@ SUPERSEDED = {
     "MetadataConsolidatorNode_V2": "MetadataConsolidatorNode_V3",
     "EricLoadImageExtended": "EricLoadImageExtended_V2",
     "EricLoadImageWithLayers": "EricLoadImageWithLayers_V2",
+    "EricSaveTrueSVGImage": "EricSaveTrueSVGImage_V2",
+    "EricSaveQwenLayers": "EricSaveQwenLayers_V2",
+    "PngMetadataExtractorV3": "PngMetadataExtractorV4",
+    "PngInfoDiagnosticV3": "PngInfoDiagnosticV4",
+    "SplitWorkflowExtractorNode_V2": "SplitWorkflowExtractorNode_V3",
+    "Eric_Workflow_Toolkit_v2": "Eric_Workflow_Toolkit_v3",
+    "EricCivitaiPromptExtractor": "EricCivitaiPromptExtractor_V2",
+    "EricCivitaiPromptExtractorAutoLoader": "EricCivitaiPromptExtractorAutoLoader_V2",
+    "FileOrganizer": "FileOrganizerV2",
 }
 
 
