@@ -3,7 +3,7 @@
 ![GitHub License](https://img.shields.io/github/license/EricRollei/AAA_Metadata_System)
 ![Python](https://img.shields.io/badge/python-3.8%2B-blue)
 
-One save node that does it all - PNG, JPG, WebP, TIFF, PSD, APNG and SVG, true 16-bit, Photoshop layers, real colour management - and that writes what made each image where Lightroom, XnView MP and Capture One can search it. Plus the load, metadata, LoRA, colour and file nodes that go with it.
+One save node that does it all - PNG, JPG, WebP, TIFF, PSD, APNG and SVG, true 16-bit, Photoshop layers, real color management - and that writes what made each image where Lightroom, XnView MP and Capture One can search it. Plus the load, metadata, LoRA, color and file nodes that go with it.
 
 ## ⭐ AAA Save Image All - the Swiss army knife of image saving
 
@@ -14,7 +14,7 @@ Connect your images and press Queue. No wiring of prompts, models or seeds: the 
 
 ### What sets it apart
 
-**1. Your images become searchable in a photo catalogue.**
+**1. Your images become searchable in a photo catalog.**
 Most save nodes put the prompt in a PNG text chunk that only AI tools read. This node writes standard XMP fields that photo software indexes:
 
 | What | Where it is written | Where you see it |
@@ -31,25 +31,25 @@ Type a LoRA name into Lightroom's keyword filter and get every image made with i
 - Works with switches, wildcards, prompt rewriters and all-in-one sampler nodes: what is stored is what the node received, including the prompt after an LLM rewrote it (the typed prompt is kept as well).
 - Every model with its role: checkpoint / UNet, text encoders, VAE, LoRAs with strengths, upscale models.
 - Every sampling pass: steps, CFG, sampler, scheduler, seed, start / end step.
-- Model hashes and an A1111-style parameters block, so Civitai and AI image browsers recognise the resources.
+- Model hashes and an A1111-style parameters block, so Civitai and AI image browsers recognize the resources.
 - Parameter sweeps (Eric_Krea2): each image of the batch carries the settings of its own cell.
 - Scores from analysis nodes (Eric-image-classification: UniPercept, IQA, blur...) that looked at the image in the same run are stored automatically.
 
 **3. Layers that open as layers in Photoshop - in PSD and in TIFF.**
-- Two overlay layers and two mask layers next to the main image, each with its own name, opacity and blend mode (normal, multiply, screen, overlay, add, subtract, difference, darken, lighten, colour dodge, colour burn).
+- Two overlay layers and two mask layers next to the main image, each with its own name, opacity and blend mode (normal, multiply, screen, overlay, add, subtract, difference, darken, lighten, color dodge, color burn).
 - 8-bit and true 16-bit PSD.
 - Layered TIFF: the layers are written in Photoshop's own TIFF layer format, so the file opens with its layer stack in Photoshop while every other program shows the flattened picture.
 - The matching load node (`Eric Load Image with Layers v2`) brings the layers back into ComfyUI.
 
-**4. Real colour management.**
+**4. Real color management.**
 - sRGB (three v4 variants), Adobe RGB, ProPhoto RGB and Display P3.
-- The pixels are converted into the chosen colour space with the rendering intent you pick, and the ICC profile is embedded - the file looks the same in a colour-managed viewer as in ComfyUI. (Attach-only, without conversion, is one switch away.)
+- The pixels are converted into the chosen color space with the rendering intent you pick, and the ICC profile is embedded - the file looks the same in a color-managed viewer as in ComfyUI. (Attach-only, without conversion, is one switch away.)
 - True 16-bit PNG, TIFF and PSD: the full precision of the tensor, not an 8-bit image in a 16-bit container.
 
 **5. Seven formats, and two at once.**
 - PNG, JPG, WebP, TIFF, PSD, animated PNG, and true vector SVG (traced; needs `vtracer`).
-- Optional second copy of every image in another format, with its own quality, colour profile and file-name suffix - for example a 16-bit ProPhoto TIFF master plus an sRGB JPG for the web, in one pass.
-- Three quality presets; alpha as premultiplied, straight, matte on a colour of your choice, or saved separately.
+- Optional second copy of every image in another format, with its own quality, color profile and file-name suffix - for example a 16-bit ProPhoto TIFF master plus an sRGB JPG for the web, in one pass.
+- Three quality presets; alpha as premultiplied, straight, matte on a color of your choice, or saved separately.
 
 **6. Files where you want them.**
 - Output sub-folder or any absolute path; date tokens in folder and file names; project name and date / time in the file name; padded or simple numbering.
@@ -139,8 +139,8 @@ Check: `exiftool -ver` in a terminal prints a version number. In ComfyUI, the `s
 |---|---|
 | **Adobe Lightroom Classic** | Caption (prompt), title, keywords incl. hierarchy `AI > Model / LoRA / Sampler`, creator, copyright, rating - all searchable in the Library filter. After changing files outside Lightroom use *Metadata > Read Metadata from File*. |
 | **XnView MP** | Description, keywords, title, creator and rating in the info panel and in search. |
-| **Capture One** | Description, keywords, title, creator. Capture One does not open WebP files - use PNG, JPG, TIFF or PSD for images you catalogue there. Old-style IPTC blocks are removed from the files because Capture One prefers them over XMP. |
-| **Adobe Photoshop** | File Info shows the standard fields; PSD and layered TIFF open with their layers; embedded ICC profiles are honoured. |
+| **Capture One** | Description, keywords, title, creator. Capture One does not open WebP files - use PNG, JPG, TIFF or PSD for images you catalog there. Old-style IPTC blocks are removed from the files because Capture One prefers them over XMP. |
+| **Adobe Photoshop** | File Info shows the standard fields; PSD and layered TIFF open with their layers; embedded ICC profiles are honored. |
 | **Civitai, AI image browsers** | A1111-style parameters block with model and LoRA hashes; the ComfyUI workflow in PNGs. |
 
 Checked in Lightroom Classic, Capture One and Photoshop; the three show the same fields, apart from WebP in Capture One.
@@ -192,7 +192,7 @@ Useful for workflows that branch on metadata, or to show a stored prompt or scor
 
 Overlay text on images with extensive styling:
 
-- Font selection from system fonts, size, colour, alignment, spacing, bold and italic
+- Font selection from system fonts, size, color, alignment, spacing, bold and italic
 - Effects: gradient, metal, neon, emboss; drop shadow and outline
 - Blend modes (normal, multiply, screen, overlay) and adjustable opacity
 - Automatic wrapping by width or character count; text from TXT or Markdown files
@@ -216,7 +216,7 @@ Scans folders for duplicates and similar images with perceptual hashing:
 
 ### Wan 2.2 size nodes
 
-- **Wan 2.2 Aspect Ratio Helper**: analyses an input image and gives suitable dimensions for image-to-video
+- **Wan 2.2 Aspect Ratio Helper**: analyzes an input image and gives suitable dimensions for image-to-video
 - **Wan 2.2 Size Preset**: dimensions from predefined aspect ratios for text-to-video
 
 Both keep all dimensions divisible by 8, check the known Wan 2.2 training sizes first, and offer six size presets from Tiny (~200K pixels) to Gigantic (~2M pixels). Size Preset has 15 predefined ratios (6 portrait, square, 8 landscape).
@@ -271,7 +271,7 @@ print(reader.generation_summary(data))             # flat: prompt, model, loras,
 from AAA_Metadata_System.aaa_meta import writer
 
 writer.add_analysis("path/to/image.png", {"my_node": {"sharpness": 0.82, "label": "portrait"}})
-writer.patch_metadata("path/to/image.png", rating=4, project="Spring catalogue", sidecar=True)
+writer.patch_metadata("path/to/image.png", rating=4, project="Spring catalog", sidecar=True)
 ```
 
 **The first-generation service** still works and is what the Query / Filter nodes present as their structure (`basic`, `ai_info.generation`, `analysis`):

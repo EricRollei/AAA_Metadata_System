@@ -58,7 +58,7 @@ class _JpegFormatParams(dict):
 
 
 def _convert_tensor(images, profile: str):
-    """sRGB image tensor (B,H,W,C) -> same tensor in `profile` colour space."""
+    """sRGB image tensor (B,H,W,C) -> same tensor in `profile` color space."""
     array = images.cpu().numpy() if torch.is_tensor(images) else np.asarray(images)
     converted = color.convert_from_srgb(array[..., :3], profile)
     if array.shape[-1] == 4:
@@ -103,18 +103,18 @@ _TOOLTIPS = {
     "overlay_2_name": "Layer name shown in Photoshop.",
     "overlay_2_blend_mode": "Photoshop blend mode of this layer: " + _BLEND + ".",
     "overlay_2_opacity": "Layer opacity, 0 (invisible) to 255 (opaque).",
-    # --- colour, depth, alpha
-    "color_profile": "Colour space of the saved file: sRGB (three v4 variants), Adobe RGB, ProPhoto RGB, Display "
+    # --- color, depth, alpha
+    "color_profile": "Color space of the saved file: sRGB (three v4 variants), Adobe RGB, ProPhoto RGB, Display "
                      "P3, or None. The ICC profile is embedded; with convert_to_color_profile on (default) the "
-                     "pixels are converted into that colour space as well.",
-    "rendering_intent": "How out-of-range colours are mapped when converting to the colour profile. Relative "
+                     "pixels are converted into that color space as well.",
+    "rendering_intent": "How out-of-range colors are mapped when converting to the color profile. Relative "
                         "Colorimetric suits most pictures; Perceptual keeps gradations in very saturated ones.",
     "bit_depth": "8-bit (standard) or 16-bit (high precision). True 16-bit for png, tiff and psd; jpg, webp, "
                  "apng and svg are always 8-bit.",
-    "alpha_mode": "Transparency: auto = best choice for the format; straight / premultiplied = how colour and "
+    "alpha_mode": "Transparency: auto = best choice for the format; straight / premultiplied = how color and "
                   "alpha are stored; matte = flatten onto matte_color (formats without transparency, e.g. jpg).",
-    "matte_color": "Background colour for alpha_mode 'matte'. Colour name or hex value such as #FFFFFF.",
-    "save_alpha_separately": "Also save the alpha channel as a separate greyscale image - for formats that "
+    "matte_color": "Background color for alpha_mode 'matte'. Color name or hex value such as #FFFFFF.",
+    "save_alpha_separately": "Also save the alpha channel as a separate grayscale image - for formats that "
                              "cannot hold transparency.",
     "apng_fps": "Animated PNG: frames per second.",
     "apng_loops": "Animated PNG: how often it repeats (0 = forever).",
@@ -124,10 +124,10 @@ _TOOLTIPS = {
     "additional_format_quality": "Compression of the second copy.",
     "additional_format_suffix": "Text added to the file name of the second copy (image_web.jpg).",
     "additional_format_embed_workflow": "Embed the ComfyUI workflow in the second copy (png only).",
-    "additional_format_color_profile": "Colour profile of the second copy - e.g. sRGB for the web copy of a "
+    "additional_format_color_profile": "Color profile of the second copy - e.g. sRGB for the web copy of a "
                                        "ProPhoto master.",
     # --- svg
-    "svg_colormode": "SVG only: trace in colour or in black and white.",
+    "svg_colormode": "SVG only: trace in color or in black and white.",
     "svg_hierarchical": "SVG only: stacked = shapes lie on top of each other (smaller files, no gaps); cutout = "
                         "shapes are cut out of each other.",
     "svg_mode": "SVG only: outline as smooth curves (spline), straight segments (polygon) or pixel-exact (none).",
@@ -185,7 +185,7 @@ class MetadataAwareSaveImageV100(_SaveImageV099d):
             "tooltip": "Keep the full disk paths of model files in the embedded record (off: names and hashes only)."})
         optional["convert_to_color_profile"] = ("BOOLEAN", {
             "default": True,
-            "tooltip": "Convert the pixels into the chosen colour profile (Adobe RGB / ProPhoto). Off = attach "
+            "tooltip": "Convert the pixels into the chosen color profile (Adobe RGB / ProPhoto). Off = attach "
                        "the profile without converting, as v099d did."})
         optional["collect_measurements"] = ("BOOLEAN", {
             "default": True,
@@ -215,7 +215,7 @@ class MetadataAwareSaveImageV100(_SaveImageV099d):
     OUTPUT_NODE = True
     CATEGORY = _SaveImageV099d.CATEGORY
     DESCRIPTION = ("The Swiss army knife of image saving: PNG, JPG, WebP, TIFF, PSD, APNG and SVG; true 16-bit; "
-                   "Photoshop layers with blend modes in PSD and TIFF; real colour management (sRGB, Adobe RGB, "
+                   "Photoshop layers with blend modes in PSD and TIFF; real color management (sRGB, Adobe RGB, "
                    "ProPhoto, Display P3); prompts, models, LoRAs and settings collected automatically and written "
                    "where Lightroom, XnView and Capture One can search them.")
 
@@ -290,7 +290,7 @@ class MetadataAwareSaveImageV100(_SaveImageV099d):
                 self.metadata_service.record_for_frame = None
                 self._v100_notes.append(f"recipe not applied: {exc!r}")
 
-        # 2. real colour conversion (the base class then attaches the matching profile)
+        # 2. real color conversion (the base class then attaches the matching profile)
         self._v100_main_profile = map_color_profile(kwargs.get("color_profile", ""))
         self._v100_srgb_frames = None
         if convert_colors and self._v100_main_profile in color.CONVERTED_PROFILES:
@@ -303,7 +303,7 @@ class MetadataAwareSaveImageV100(_SaveImageV099d):
             except Exception as exc:
                 images = original_images
                 self._v100_srgb_frames = None
-                self._v100_notes.append(f"colour conversion failed, saved unconverted: {exc!r}")
+                self._v100_notes.append(f"color conversion failed, saved unconverted: {exc!r}")
 
         # 3. everything else exactly as v099d
         output = super().save_with_metadata(images, filename_prefix=filename_prefix, prompt=prompt,
@@ -474,7 +474,7 @@ class MetadataAwareSaveImageV100(_SaveImageV099d):
             return False
 
     def _save_additional_format(self, image, primary_path, metadata, prompt=None, extra_pnginfo=None, **kwargs):
-        # The second copy may use a different colour profile than the main file:
+        # The second copy may use a different color profile than the main file:
         # start again from the sRGB pixels so it is not converted twice.
         if self._v100_srgb_frames is not None:
             additional_profile = map_color_profile(kwargs.get("additional_format_color_profile", ""))

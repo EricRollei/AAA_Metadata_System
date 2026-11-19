@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added - Metadata system 2.0
 - **AAA Save Image All PNG WebP JPG PSD TIFF SVG w Metadata**: every option of v099d, plus generation data collected automatically while
   the workflow runs and written where Lightroom, XnView MP and Capture One search (caption, keywords,
-  headline, instructions) and in the `hcai` / `eiqa` namespaces. Display P3, real colour conversion,
+  headline, instructions) and in the `hcai` / `eiqa` namespaces. Display P3, real color conversion,
   true 16-bit TIFF and PSD, Photoshop-readable layers in TIFF, automatic collection of measurements.
 - Companion nodes on the same core: Metadata Entry V3, Query V4, Filter V3, Enhanced Filter V3, Debugger V3,
   Consolidator V3, Add Measurements to Image v1, Generation Record (debug) v1.
@@ -34,7 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Save Image with Metadata v099d now runs the same code.** Existing workflows need no editing: v099d's
   widgets keep their order, the five new ones follow with their defaults. Set `AAA_META_KEEP_OLD_SAVE=1`  
   to keep the original v099d. Note: Adobe RGB / ProPhoto now convert the pixels (v099d only attached the
-  profile), and 8-bit PNG / JPG / WebP honour the colour-profile and embed-workflow widgets.
+  profile), and 8-bit PNG / JPG / WebP honour the color-profile and embed-workflow widgets.
 - The pack loads once. Imports by the names `AAA_Metadata_System` and `custom_nodes.AAA_Metadata_System`
   resolve to the loaded pack whatever the folder is called (the registry installs it as
   `aaa-metadata-system`, where those imports used to fail).
