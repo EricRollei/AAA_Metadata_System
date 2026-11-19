@@ -148,3 +148,8 @@ tests_v2/fixtures_local/
 nodes/civitai_cache.json
 nodes/debug/
 
+
+# personal tester databases - created on first use, never shipped
+nodes/lora_tester_db.json
+nodes/checkpoint_tester_db.json
+nodes/*_tester_db*.json.bak

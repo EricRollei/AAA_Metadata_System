@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- The LoRA tester and checkpoint tester databases (`nodes/lora_tester_db.json`, `nodes/checkpoint_tester_db.json`)
+  are no longer part of the repository. Each installation creates its own, empty, on first use.
+
 ## [0.2.0] - 2026-11-18
 
 ### Added - Metadata system 2.0
