@@ -1,7 +1,7 @@
 """
 ComfyUI Nodes - Custom Nodes Collection for ComfyUI
 Author: Eric Hiss (GitHub: EricRollei)
-Version: 0.2.0
+Version: 0.2.1
 """
 
 from setuptools import setup, find_packages
@@ -14,7 +14,7 @@ with open("requirements.txt", "r", encoding="utf-8") as f:
 
 setup(
     name="comfyui-nodes",
-    version="0.2.0",
+    version="0.2.1",
     author="Eric Hiss",
     author_email="your.email@example.com",  # Replace with your email
     description="A collection of custom nodes for ComfyUI",

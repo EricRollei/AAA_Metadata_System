@@ -141,7 +141,7 @@ except Exception as _upgrade_error:
     print(f"[AAA Metadata] v099d save node not upgraded: {_upgrade_error!r}")
 
 # Version info
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 
 # Add web directory for UI components if needed
 # v2: one menu tree for the whole pack, "Eric's Nodes/..." (AAA_META_KEEP_OLD_CATEGORIES=1 disables)
