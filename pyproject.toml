@@ -1,6 +1,6 @@
 [project]
 name = "aaa-metadata-system"
-description = "Save images with generation metadata collected automatically and stored where Lightroom, XnView MP and Capture One can search it. PNG, JPG, WebP, TIFF, PSD and SVG, 16-bit, colour profiles, Photoshop layers, quality measurements."
+description = "Save images with generation metadata collected automatically and stored where Lightroom, XnView MP and Capture One can search it. PNG, JPG, WebP, TIFF, PSD and SVG, 16-bit, color management, Photoshop layers, quality measurements."
 readme = "README.md"
 version = "0.2.0"
 license = { file = "LICENSE" }

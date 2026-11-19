@@ -139,11 +139,11 @@ Check: `exiftool -ver` in a terminal prints a version number. In ComfyUI, the `s
 |---|---|
 | **Adobe Lightroom Classic** | Caption (prompt), title, keywords incl. hierarchy `AI > Model / LoRA / Sampler`, creator, copyright, rating - all searchable in the Library filter. After changing files outside Lightroom use *Metadata > Read Metadata from File*. |
 | **XnView MP** | Description, keywords, title, creator and rating in the info panel and in search. |
-| **Capture One** | Description, keywords, title, creator. Old-style IPTC blocks are removed from the files because Capture One prefers them over XMP. |
+| **Capture One** | Description, keywords, title, creator. Capture One does not open WebP files - use PNG, JPG, TIFF or PSD for images you catalogue there. Old-style IPTC blocks are removed from the files because Capture One prefers them over XMP. |
 | **Adobe Photoshop** | File Info shows the standard fields; PSD and layered TIFF open with their layers; embedded ICC profiles are honoured. |
 | **Civitai, AI image browsers** | A1111-style parameters block with model and LoRA hashes; the ComfyUI workflow in PNGs. |
 
-Checked in Lightroom Classic and Photoshop. XnView MP and Capture One read the same standard XMP fields.
+Checked in Lightroom Classic, Capture One and Photoshop; the three show the same fields, apart from WebP in Capture One.
 
 ## What is stored
 
